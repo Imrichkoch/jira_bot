@@ -1,5 +1,6 @@
 import re
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -850,7 +851,20 @@ def chat(payload: ChatRequest) -> ChatResponse:
                     data=None,
                 )
             protocol = assets_print_protocol(AssetsPrintProtocolRequest(object_query=parsed.get("query") or payload.message))
-            return ChatResponse(action="assets_print", message="Assets print protocol ready", data=protocol.model_dump())
+            protocol_data = protocol.model_dump()
+            safe_name = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(protocol_data.get("object_query", "asset"))).strip("-")
+            if not safe_name:
+                safe_name = "asset"
+            file_name = f"print-protocol-{safe_name}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.txt"
+            protocol_dir = STATIC_DIR / "protocols"
+            protocol_dir.mkdir(parents=True, exist_ok=True)
+            (protocol_dir / file_name).write_text(str(protocol_data.get("protocol", "")), encoding="utf-8")
+            protocol_data["protocol_url"] = f"/static/protocols/{file_name}"
+            return ChatResponse(
+                action="assets_print",
+                message="Assets print protocol ready",
+                data=protocol_data,
+            )
 
         query = parsed.get("query") or payload.message
         search_result = _search_logic(query, payload.max_results)
