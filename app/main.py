@@ -59,7 +59,13 @@ def chat_ui() -> FileResponse:
 
 def _search_logic(query: str, max_results: int) -> SearchTicketsResponse:
     raw_jql = ai.generate_jql(user_query=query, default_project=settings.jira_project_key)
-    safe_jql = validate_jql(raw_jql)
+    jql_candidate = raw_jql.strip()
+    if not re.search(r"\bproject\s*=", jql_candidate, flags=re.IGNORECASE):
+        if jql_candidate:
+            jql_candidate = f"project = {settings.jira_project_key} AND ({jql_candidate})"
+        else:
+            jql_candidate = f"project = {settings.jira_project_key} ORDER BY updated DESC"
+    safe_jql = validate_jql(jql_candidate)
     result = jira.search(jql=safe_jql, max_results=max_results)
     issues = []
     for issue in result.get("issues", []):
@@ -443,8 +449,8 @@ def chat(payload: ChatRequest) -> ChatResponse:
         assign_hint = bool(re.search(r"\b(assign|prirad|assigni|assigned|asignuj)\b", lower_message)) and (
             "ticket" in lower_message or "tiket" in lower_message
         )
-        list_users_hint = bool(re.search(r"\b(zoznam|vypis|list)\b", lower_message)) and bool(
-            re.search(r"\b(user|userov|users|pouzivatel|pouzivatelov)\b", lower_message)
+        list_users_hint = bool(re.search(r"\b(zoznam|vypis|list|kto su|kto sú)\b", lower_message)) and bool(
+            re.search(r"\b(user|userov|users|pouzivatel|pouzivatelov|admin|adminov|admins)\b", lower_message)
         )
         list_tickets_hint = bool(
             re.search(r"\b(zoznam|vypis|list|ake mame|aké máme)\b", lower_message)

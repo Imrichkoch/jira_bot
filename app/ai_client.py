@@ -63,7 +63,8 @@ class AIClient:
             "2) Prefer project = <default_project> unless user clearly requests another project.\n"
             "3) Keep query safe/read-only (no SQL-like statements).\n"
             "4) Use common fields only: project, summary, description, status, assignee, reporter, labels, priority, created, updated, type.\n"
-            "5) Add ORDER BY updated DESC when useful.\n"
+            "5) Prefer statusCategory for open/closed filters (status names can be localized).\n"
+            "6) Add ORDER BY updated DESC when useful.\n"
             f"Default project is: {default_project}"
         )
         return self._text_response(instructions, user_query)
