@@ -1,4 +1,5 @@
 import re
+import json
 from pathlib import Path
 from typing import Any
 
@@ -7,16 +8,23 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.ai_client import AIClient
+from app.analysis import cosine_similarity, extract_adf_text, overlap_keywords
 from app.config import get_settings
 from app.jira_client import JiraClient
 from app.jql_guard import JQLValidationError, validate_jql
 from app.schemas import (
     CreateTicketRequest,
     CreateTicketResponse,
+    ClassifyIncidentRequest,
+    ClassifyIncidentResponse,
     ChatRequest,
     ChatResponse,
+    CorrelateChangesRequest,
+    CorrelateChangesResponse,
     SearchTicketsRequest,
     SearchTicketsResponse,
+    SimilarTicketsRequest,
+    SimilarTicketsResponse,
     SummarizeTicketRequest,
     SummarizeTicketResponse,
 )
@@ -67,6 +75,22 @@ def _search_logic(query: str, max_results: int) -> SearchTicketsResponse:
     return SearchTicketsResponse(jql=safe_jql, total=total, issues=issues)
 
 
+def _issue_text(fields: dict[str, Any]) -> str:
+    summary = fields.get("summary") or ""
+    desc = extract_adf_text(fields.get("description"))
+    return f"{summary}\n{desc}".strip()
+
+
+def _load_service_catalog() -> list[dict[str, Any]]:
+    catalog_path = BASE_DIR.parent / "service_catalog.json"
+    if not catalog_path.exists():
+        return []
+    data = json.loads(catalog_path.read_text(encoding="utf-8"))
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict) and item.get("name")]
+    return []
+
+
 @app.post("/tickets/create", response_model=CreateTicketResponse)
 def create_ticket(payload: CreateTicketRequest) -> CreateTicketResponse:
     try:
@@ -102,6 +126,141 @@ def search_tickets(payload: SearchTicketsRequest) -> SearchTicketsResponse:
         return _search_logic(payload.query, payload.max_results)
     except JQLValidationError as exc:
         raise HTTPException(status_code=400, detail=f"Generated JQL rejected: {exc}") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/tickets/similar", response_model=SimilarTicketsResponse)
+def similar_tickets(payload: SimilarTicketsRequest) -> SimilarTicketsResponse:
+    try:
+        if not payload.issue_key and not payload.text:
+            raise HTTPException(status_code=400, detail="Provide issue_key or text.")
+
+        source_text = payload.text or ""
+        source_label = "text"
+        if payload.issue_key:
+            issue = jira.get_issue(payload.issue_key)
+            source_text = _issue_text(issue.get("fields", {}))
+            source_label = payload.issue_key
+
+        jql = f"project = {settings.jira_project_key} ORDER BY updated DESC"
+        result = jira.search_with_fields(
+            jql=jql,
+            fields=["summary", "description", "status", "issuetype", "updated", "created"],
+            max_results=payload.max_candidates,
+        )
+        rows: list[dict[str, Any]] = []
+        for issue in result.get("issues", []):
+            key = issue.get("key")
+            if payload.issue_key and key == payload.issue_key:
+                continue
+            fields = issue.get("fields", {})
+            text = _issue_text(fields)
+            score = cosine_similarity(source_text, text)
+            if score <= 0:
+                continue
+            rows.append(
+                {
+                    "key": key,
+                    "summary": fields.get("summary"),
+                    "status": (fields.get("status") or {}).get("name"),
+                    "issue_type": (fields.get("issuetype") or {}).get("name"),
+                    "score": round(score, 4),
+                    "overlap_keywords": overlap_keywords(source_text, text),
+                    "updated": fields.get("updated"),
+                }
+            )
+        rows.sort(key=lambda r: r["score"], reverse=True)
+        return SimilarTicketsResponse(source=source_label, top_k=payload.top_k, items=rows[: payload.top_k])
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/inc/classify-service", response_model=ClassifyIncidentResponse)
+def classify_incident_service(payload: ClassifyIncidentRequest) -> ClassifyIncidentResponse:
+    try:
+        if not payload.issue_key and not payload.text:
+            raise HTTPException(status_code=400, detail="Provide issue_key or text.")
+        catalog = _load_service_catalog()
+        if not catalog:
+            raise HTTPException(
+                status_code=400,
+                detail="service_catalog.json not found. Create it in project root (array of {name, keywords}).",
+            )
+
+        source_text = payload.text or ""
+        if payload.issue_key:
+            issue = jira.get_issue(payload.issue_key)
+            source_text = _issue_text(issue.get("fields", {}))
+
+        ranked: list[dict[str, Any]] = []
+        for service in catalog:
+            name = str(service.get("name", ""))
+            keywords = service.get("keywords") or []
+            keyword_text = " ".join(str(k) for k in keywords)
+            score = cosine_similarity(source_text, f"{name} {keyword_text}")
+            ranked.append({"service": name, "score": round(score, 4), "keywords": keywords[:8]})
+        ranked.sort(key=lambda x: x["score"], reverse=True)
+        top = ranked[: payload.top_k]
+        best = top[0] if top else {"service": "unknown", "score": 0.0}
+        return ClassifyIncidentResponse(
+            predicted_service=best["service"],
+            confidence=best["score"],
+            alternatives=top,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/inc/correlate-changes", response_model=CorrelateChangesResponse)
+def correlate_changes(payload: CorrelateChangesRequest) -> CorrelateChangesResponse:
+    try:
+        if not payload.incident_issue_key and not payload.incident_text:
+            raise HTTPException(status_code=400, detail="Provide incident_issue_key or incident_text.")
+
+        incident_text = payload.incident_text or ""
+        source = "text"
+        if payload.incident_issue_key:
+            inc = jira.get_issue(payload.incident_issue_key)
+            incident_text = _issue_text(inc.get("fields", {}))
+            source = payload.incident_issue_key
+
+        lookback = payload.lookback_days
+        project = settings.jira_project_key
+        jql = (
+            f"project = {project} AND updated >= -{lookback}d "
+            "AND (summary ~ \"deploy\" OR summary ~ \"patch\" OR description ~ \"deploy\" OR description ~ \"patch\") "
+            "ORDER BY updated DESC"
+        )
+        result = jira.search_with_fields(
+            jql=jql,
+            fields=["summary", "description", "status", "issuetype", "updated", "created"],
+            max_results=200,
+        )
+        links: list[dict[str, Any]] = []
+        for issue in result.get("issues", []):
+            fields = issue.get("fields", {})
+            change_text = _issue_text(fields)
+            score = cosine_similarity(incident_text, change_text)
+            if score < 0.05:
+                continue
+            links.append(
+                {
+                    "key": issue.get("key"),
+                    "summary": fields.get("summary"),
+                    "issue_type": (fields.get("issuetype") or {}).get("name"),
+                    "status": (fields.get("status") or {}).get("name"),
+                    "updated": fields.get("updated"),
+                    "similarity": round(score, 4),
+                    "overlap_keywords": overlap_keywords(incident_text, change_text),
+                }
+            )
+        links.sort(key=lambda x: x["similarity"], reverse=True)
+        return CorrelateChangesResponse(
+            incident_source=source,
+            lookback_days=lookback,
+            links=links[: payload.top_k],
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

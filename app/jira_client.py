@@ -93,3 +93,11 @@ class JiraClient:
             "fields": ["summary", "status", "priority", "assignee", "created", "updated", "issuetype"],
         }
         return self._request("POST", "/rest/api/3/search/jql", json=payload)
+
+    def search_with_fields(self, *, jql: str, fields: list[str], max_results: int = 50) -> dict[str, Any]:
+        payload = {
+            "jql": jql,
+            "maxResults": max_results,
+            "fields": fields,
+        }
+        return self._request("POST", "/rest/api/3/search/jql", json=payload)

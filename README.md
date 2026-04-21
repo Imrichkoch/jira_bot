@@ -102,6 +102,53 @@ Response vracia:
 - `total`
 - zjednoduseny zoznam issue
 
+### Similar/identical tickets
+
+`POST /tickets/similar`
+
+Priklad:
+```json
+{
+  "issue_key": "KAN-1",
+  "top_k": 5
+}
+```
+
+alebo:
+```json
+{
+  "text": "login fails after deploy with 500",
+  "top_k": 5
+}
+```
+
+### Assigning services to INC
+
+`POST /inc/classify-service`
+
+Priklad:
+```json
+{
+  "issue_key": "KAN-4",
+  "top_k": 3
+}
+```
+
+Service mapping sa cita zo suboru `service_catalog.json` (name + keywords).
+
+### Correlations between INC / Patch / Deploy
+
+`POST /inc/correlate-changes`
+
+Priklad:
+```json
+{
+  "incident_issue_key": "KAN-4",
+  "lookback_days": 14,
+  "top_k": 10
+}
+```
+
 ## 4) Poznamky k bezpecnosti
 
 - API tokeny drzat iba v `.env` (nikdy necommitovat).

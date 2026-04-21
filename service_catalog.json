@@ -1,0 +1,22 @@
+[
+  {
+    "name": "Identity & Access",
+    "keywords": ["login", "auth", "oauth", "sso", "password", "token", "permission", "authorization"]
+  },
+  {
+    "name": "Network & Connectivity",
+    "keywords": ["network", "dns", "latency", "timeout", "proxy", "vpn", "connection", "packet"]
+  },
+  {
+    "name": "Compute & Servers",
+    "keywords": ["server", "vm", "cpu", "memory", "disk", "host", "kernel", "crash"]
+  },
+  {
+    "name": "Database",
+    "keywords": ["database", "sql", "query", "replication", "deadlock", "index", "postgres", "mysql"]
+  },
+  {
+    "name": "Deployment & Release",
+    "keywords": ["deploy", "release", "pipeline", "build", "rollback", "patch", "hotfix", "artifact"]
+  }
+]

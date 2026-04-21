@@ -47,3 +47,41 @@ class ChatResponse(BaseModel):
     action: str
     message: str
     data: dict[str, Any] | None = None
+
+
+class SimilarTicketsRequest(BaseModel):
+    issue_key: str | None = None
+    text: str | None = None
+    max_candidates: int = Field(default=100, ge=10, le=300)
+    top_k: int = Field(default=10, ge=1, le=30)
+
+
+class SimilarTicketsResponse(BaseModel):
+    source: str
+    top_k: int
+    items: list[dict[str, Any]]
+
+
+class ClassifyIncidentRequest(BaseModel):
+    issue_key: str | None = None
+    text: str | None = None
+    top_k: int = Field(default=3, ge=1, le=10)
+
+
+class ClassifyIncidentResponse(BaseModel):
+    predicted_service: str
+    confidence: float
+    alternatives: list[dict[str, Any]]
+
+
+class CorrelateChangesRequest(BaseModel):
+    incident_issue_key: str | None = None
+    incident_text: str | None = None
+    lookback_days: int = Field(default=14, ge=1, le=90)
+    top_k: int = Field(default=10, ge=1, le=30)
+
+
+class CorrelateChangesResponse(BaseModel):
+    incident_source: str
+    lookback_days: int
+    links: list[dict[str, Any]]
