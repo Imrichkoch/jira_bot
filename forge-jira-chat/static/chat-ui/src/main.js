@@ -1,4 +1,5 @@
 import { invoke, view, Modal } from "@forge/bridge";
+import "./styles.css";
 
 const chatEl = document.getElementById("chat");
 const formEl = document.getElementById("form");
