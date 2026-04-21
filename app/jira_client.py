@@ -164,3 +164,6 @@ class JiraClient:
         if last_error:
             raise RuntimeError(str(last_error))
         raise RuntimeError("Assets query failed with unknown error.")
+
+    def get_asset_object(self, *, workspace_id: str, object_id_or_key: str) -> dict[str, Any]:
+        return self._request("GET", f"/gateway/api/jsm/assets/workspace/{workspace_id}/v1/object/{object_id_or_key}")

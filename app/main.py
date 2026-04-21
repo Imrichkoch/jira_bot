@@ -114,6 +114,7 @@ def _assets_search_from_nl(nl_query: str, max_results: int) -> AssetsQueryRespon
     aql = ai.generate_aql(user_query=nl_query)
     data = None
     used_aql = aql
+    used_fallback = False
     try:
         data = jira.assets_query(workspace_id=workspace_id, aql=aql, max_results=max_results)
     except Exception:
@@ -121,8 +122,14 @@ def _assets_search_from_nl(nl_query: str, max_results: int) -> AssetsQueryRespon
         fallback = "objectId > 0"
         data = jira.assets_query(workspace_id=workspace_id, aql=fallback, max_results=max(100, max_results))
         used_aql = fallback
+        used_fallback = True
 
     objects_raw = data.get("objectEntries") or data.get("results", {}).get("objectEntries") or data.get("values") or []
+    if not objects_raw and not used_fallback:
+        fallback = "objectId > 0"
+        data = jira.assets_query(workspace_id=workspace_id, aql=fallback, max_results=max(100, max_results))
+        used_aql = fallback
+        objects_raw = data.get("objectEntries") or data.get("results", {}).get("objectEntries") or data.get("values") or []
     objects = [flatten_assets_object(obj) for obj in objects_raw]
     if used_aql == "objectId > 0" and nl_query.strip():
         terms = [t for t in re.findall(r"[a-zA-Z0-9]{2,}", nl_query.lower()) if t not in {"najdi", "find", "assets"}]
@@ -134,7 +141,10 @@ def _assets_search_from_nl(nl_query: str, max_results: int) -> AssetsQueryRespon
                 if score > 0:
                     filtered.append((score, obj))
             filtered.sort(key=lambda x: x[0], reverse=True)
-            objects = [o for _, o in filtered][:max_results]
+            if filtered:
+                objects = [o for _, o in filtered][:max_results]
+            else:
+                objects = objects[:max_results]
         else:
             objects = objects[:max_results]
     total = data.get("total")
@@ -519,13 +529,22 @@ def offboarding_checklist(payload: OffboardingChecklistRequest) -> OffboardingCh
 @app.post("/assets/print-protocol", response_model=AssetsPrintProtocolResponse)
 def assets_print_protocol(payload: AssetsPrintProtocolRequest) -> AssetsPrintProtocolResponse:
     try:
-        result = _assets_search_from_nl(
-            nl_query=f"Find exact assets object for: {payload.object_query}",
-            max_results=payload.max_results,
-        )
-        if not result.objects:
+        workspace_id = _require_assets_workspace()
+        key_match = re.search(r"\bCDX-\d+\b", payload.object_query.upper())
+        obj = None
+        if key_match:
+            raw = jira.get_asset_object(workspace_id=workspace_id, object_id_or_key=key_match.group(0))
+            obj = flatten_assets_object(raw)
+        else:
+            result = _assets_search_from_nl(
+                nl_query=f"Find exact assets object for: {payload.object_query}",
+                max_results=max(payload.max_results, 5),
+            )
+            if result.objects:
+                obj = result.objects[0]
+
+        if not obj:
             raise HTTPException(status_code=404, detail="No Assets object found.")
-        obj = result.objects[0]
         attrs = obj.get("attributes", {})
         lines = [
             f"# Odovzdavaci Protokol",
