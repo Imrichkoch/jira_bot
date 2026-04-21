@@ -73,10 +73,10 @@ class AIClient:
         instructions = (
             "You are an intent parser for Jira assistant.\n"
             "Return strictly JSON object only.\n"
-            "Supported actions: create, summarize, search, assign, help, assets_search, assets_owner, assets_hw, assets_job_file, assets_dora, assets_sla, offboarding, assets_print.\n"
+            "Supported actions: create, summarize, search, assign, help, chat, assets_search, assets_owner, assets_hw, assets_job_file, assets_dora, assets_sla, offboarding, assets_print.\n"
             "JSON schema:\n"
             "{"
-            "\"action\":\"create|summarize|search|assign|help|assets_search|assets_owner|assets_hw|assets_job_file|assets_dora|assets_sla|offboarding|assets_print\","
+            "\"action\":\"create|summarize|search|assign|help|chat|assets_search|assets_owner|assets_hw|assets_job_file|assets_dora|assets_sla|offboarding|assets_print\","
             "\"summary\":\"string or null\","
             "\"description\":\"string or null\","
             "\"issue_key\":\"string or null\","
@@ -98,12 +98,23 @@ class AIClient:
             "9) If user asks end-of-contract access list/checklist -> action=offboarding.\n"
             "10) If user asks print protocol for Assets object -> action=assets_print.\n"
             "11) If user asks what assistant can do or generic help -> action=help.\n"
+            "12) For general conversation/small talk not requiring tool action -> action=chat.\n"
             f"Default project_key: {default_project}\n"
             f"Default issue_type: {default_issue_type}\n"
             "If a field is unknown, set it to null."
         )
         output = self._text_response(instructions, user_message)
         return self._parse_json_object(output)
+
+    def general_chat_reply(self, *, user_message: str, assets_enabled: bool) -> str:
+        instructions = (
+            "You are a friendly Jira assistant talking to the user in Slovak.\n"
+            "Be concise, natural, and helpful.\n"
+            "You can work with Jira tickets (create/search/summarize/assign/list users/list tickets/offboarding).\n"
+            f"Assets features currently {'enabled' if assets_enabled else 'disabled'}.\n"
+            "If user asks about unavailable Assets features, explain briefly they are currently unavailable."
+        )
+        return self._text_response(instructions, user_message)
 
     def generate_aql(self, *, user_query: str) -> str:
         instructions = (

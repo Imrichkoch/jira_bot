@@ -496,7 +496,7 @@ def chat(payload: ChatRequest) -> ChatResponse:
         elif list_tickets_hint:
             action = "list_tickets"
         elif greeting_hint or thanks_hint:
-            action = "smalltalk"
+            action = "chat"
         elif create_hint and not search_hint and not summarize_hint:
             action = "create"
         elif assign_hint:
@@ -639,14 +639,9 @@ def chat(payload: ChatRequest) -> ChatResponse:
             help_text = "\n".join(lines)
             return ChatResponse(action="help", message=help_text, data=None)
 
-        if action == "smalltalk":
-            if thanks_hint:
-                return ChatResponse(action="smalltalk", message="Rado sa stalo. Kludne napis, co mam s tiketmi urobit dalej.", data=None)
-            return ChatResponse(
-                action="smalltalk",
-                message="Ahoj. Viem vytvarat, hladat, sumarizovat a priradovat Jira tickety. Napis napr. \"daj mi zoznam tiketov\".",
-                data=None,
-            )
+        if action == "chat":
+            reply = ai.general_chat_reply(user_message=model_input, assets_enabled=_assets_enabled())
+            return ChatResponse(action="chat", message=reply, data=None)
 
         if action in {"assets_search", "assets_owner", "assets_hw", "assets_job_file", "assets_dora", "assets_sla"}:
             if not _assets_enabled():
