@@ -213,6 +213,45 @@ def _assign_all_unassigned(assignee_query: str, max_results: int = 200) -> dict[
     }
 
 
+def _close_issue(issue_key: str) -> dict[str, Any]:
+    issue = jira.get_issue(issue_key)
+    fields = issue.get("fields", {})
+    status = fields.get("status") or {}
+    status_name = status.get("name")
+    status_cat = (status.get("statusCategory") or {}).get("key")
+    if status_cat == "done":
+        return {"issue_key": issue_key, "status": status_name, "changed": False}
+
+    transitions = jira.get_transitions(issue_key=issue_key)
+    if not transitions:
+        raise HTTPException(status_code=400, detail=f"No transitions available for {issue_key}.")
+
+    preferred = None
+    for t in transitions:
+        to = t.get("to") or {}
+        to_cat = (to.get("statusCategory") or {}).get("key")
+        to_name = str(to.get("name") or "").lower()
+        if to_cat == "done":
+            preferred = t
+            if to_name in {"done", "closed", "resolved"}:
+                break
+    if preferred is None:
+        for t in transitions:
+            name = str(t.get("name") or "").lower()
+            if any(k in name for k in ["close", "resolve", "done", "uzav", "zavri"]):
+                preferred = t
+                break
+    if preferred is None:
+        available = [str(t.get("name") or t.get("id")) for t in transitions]
+        raise HTTPException(status_code=400, detail=f"No close-like transition found. Available: {available}")
+
+    transition_id = str(preferred.get("id"))
+    jira.transition_issue(issue_key=issue_key, transition_id=transition_id)
+    refreshed = jira.get_issue(issue_key)
+    new_status = ((refreshed.get("fields") or {}).get("status") or {}).get("name")
+    return {"issue_key": issue_key, "status": new_status, "changed": True}
+
+
 def _load_service_catalog() -> list[dict[str, Any]]:
     catalog_path = BASE_DIR.parent / "service_catalog.json"
     if not catalog_path.exists():
@@ -514,6 +553,9 @@ def chat(payload: ChatRequest) -> ChatResponse:
         assign_hint = bool(re.search(r"\b(assign|prirad|assigni|assigned|asignuj)\b", lower_message)) and (
             "ticket" in lower_message or "tiket" in lower_message
         )
+        close_hint = bool(re.search(r"\b(zavri|uzavri|close|closed|resolve|resolved|hotovo|done)\b", lower_message)) and (
+            "ticket" in lower_message or "tiket" in lower_message or _extract_issue_key(payload.message) is not None
+        )
         list_users_hint = bool(re.search(r"\b(zoznam|vypis|list|kto su|kto sú)\b", lower_message)) and bool(
             re.search(r"\b(user|userov|users|pouzivatel|pouzivatelov|admin|adminov|admins)\b", lower_message)
         )
@@ -540,6 +582,8 @@ def chat(payload: ChatRequest) -> ChatResponse:
             action = "chat"
         elif create_hint and not search_hint and not summarize_hint:
             action = "create"
+        elif close_hint:
+            action = "close"
         elif assign_hint:
             action = "assign"
         elif help_hint:
@@ -638,6 +682,22 @@ def chat(payload: ChatRequest) -> ChatResponse:
                 data=assigned.model_dump(),
             )
 
+        if action == "close":
+            issue_key = (
+                parsed.get("issue_key")
+                or _extract_issue_key(payload.message)
+                or payload.current_issue_key
+                or _extract_issue_key_from_history(payload.history)
+            )
+            if not issue_key:
+                raise HTTPException(status_code=400, detail="Issue key missing. Example: zavri KAN-11")
+            closed = _close_issue(issue_key)
+            if closed.get("changed"):
+                msg = f"Jasne, ticket {issue_key} som uzavrel. Novy status: {closed.get('status')}."
+            else:
+                msg = f"Ticket {issue_key} je uz uzavrety (status: {closed.get('status')})."
+            return ChatResponse(action="close", message=msg, data=closed)
+
         if action == "list_users":
             users = jira.list_assignable_users(project_key=settings.jira_project_key, max_results=min(payload.max_results, 100))
             mapped = [
@@ -691,15 +751,16 @@ def chat(payload: ChatRequest) -> ChatResponse:
                 "3) Najst tickety textom: \"najdi otvorene tickety o ...\"",
                 "4) Spravit summary: \"sprav summary pre KAN-1\"",
                 "5) Priradit ticket: \"prirad KAN-12 na imrich\"",
-                "6) Zoznam ticketov: \"daj mi zoznam tiketov\"",
-                "7) Zoznam userov: \"daj mi zoznam userov\"",
-                "8) Offboarding checklist podla pristupov v Jira",
+                "6) Uzavriet ticket: \"zavri KAN-11\"",
+                "7) Zoznam ticketov: \"daj mi zoznam tiketov\"",
+                "8) Zoznam userov: \"daj mi zoznam userov\"",
+                "9) Offboarding checklist podla pristupov v Jira",
             ]
             if _assets_enabled():
                 lines.extend(
                     [
-                        "9) Assets lookup: owner, HW inventory, job/file, SLA, DORA relevance",
-                        "10) Assets print protocol (odovzdavaci protokol)",
+                        "10) Assets lookup: owner, HW inventory, job/file, SLA, DORA relevance",
+                        "11) Assets print protocol (odovzdavaci protokol)",
                     ]
                 )
             lines.append("Tip: pis prirodzene, ja rozhodnem co mam urobit.")

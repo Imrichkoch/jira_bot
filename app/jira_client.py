@@ -119,6 +119,20 @@ class JiraClient:
             json={"accountId": account_id},
         )
 
+    def get_transitions(self, *, issue_key: str) -> list[dict[str, Any]]:
+        data = self._request("GET", f"/rest/api/3/issue/{issue_key}/transitions")
+        transitions = data.get("transitions")
+        if isinstance(transitions, list):
+            return transitions
+        return []
+
+    def transition_issue(self, *, issue_key: str, transition_id: str) -> None:
+        self._request(
+            "POST",
+            f"/rest/api/3/issue/{issue_key}/transitions",
+            json={"transition": {"id": transition_id}},
+        )
+
     def list_assignable_users(self, *, project_key: str, max_results: int = 50) -> list[dict[str, Any]]:
         data = self._request(
             "GET",
