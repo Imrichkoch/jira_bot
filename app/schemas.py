@@ -85,3 +85,36 @@ class CorrelateChangesResponse(BaseModel):
     incident_source: str
     lookback_days: int
     links: list[dict[str, Any]]
+
+
+class AssetsQueryRequest(BaseModel):
+    query: str = Field(min_length=2, max_length=1000)
+    max_results: int = Field(default=20, ge=1, le=200)
+
+
+class AssetsQueryResponse(BaseModel):
+    aql: str
+    total: int
+    objects: list[dict[str, Any]]
+
+
+class OffboardingChecklistRequest(BaseModel):
+    user_identifier: str = Field(min_length=2, max_length=255)
+    lookback_days: int = Field(default=365, ge=30, le=3650)
+    max_results: int = Field(default=100, ge=1, le=500)
+
+
+class OffboardingChecklistResponse(BaseModel):
+    user_identifier: str
+    tickets_found: int
+    checklist: str
+
+
+class AssetsPrintProtocolRequest(BaseModel):
+    object_query: str = Field(min_length=2, max_length=255)
+    max_results: int = Field(default=1, ge=1, le=5)
+
+
+class AssetsPrintProtocolResponse(BaseModel):
+    object_query: str
+    protocol: str

@@ -101,3 +101,25 @@ class JiraClient:
             "fields": fields,
         }
         return self._request("POST", "/rest/api/3/search/jql", json=payload)
+
+    def assets_query(self, *, workspace_id: str, aql: str, max_results: int = 50) -> dict[str, Any]:
+        payload = {
+            "qlQuery": aql,
+            "page": 1,
+            "resultPerPage": max_results,
+            "includeAttributes": True,
+        }
+        # Keep two endpoint variants for compatibility across Cloud rollouts.
+        candidates = [
+            f"/jsm/assets/workspace/{workspace_id}/v1/object/aql",
+            f"/gateway/api/jsm/assets/workspace/{workspace_id}/v1/object/aql",
+        ]
+        last_error: Exception | None = None
+        for path in candidates:
+            try:
+                return self._request("POST", path, json=payload)
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+        if last_error:
+            raise RuntimeError(str(last_error))
+        raise RuntimeError("Assets query failed with unknown error.")

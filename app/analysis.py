@@ -94,3 +94,27 @@ def overlap_keywords(a: str, b: str, top_n: int = 10) -> list[str]:
     b_set = set(normalize_text(b))
     overlap = sorted(a_set & b_set)
     return overlap[:top_n]
+
+
+def flatten_assets_object(obj: dict[str, Any]) -> dict[str, Any]:
+    attrs: dict[str, Any] = {}
+    for attr in obj.get("attributes", []) or []:
+        name = attr.get("objectTypeAttribute", {}).get("name") or attr.get("name")
+        if not name:
+            continue
+        vals = []
+        for v in attr.get("objectAttributeValues", []) or []:
+            if "displayValue" in v and v["displayValue"] is not None:
+                vals.append(v["displayValue"])
+            elif "value" in v and v["value"] is not None:
+                vals.append(v["value"])
+            elif "searchValue" in v and v["searchValue"] is not None:
+                vals.append(v["searchValue"])
+        attrs[str(name)] = vals if len(vals) != 1 else vals[0]
+    return {
+        "id": obj.get("id"),
+        "objectKey": obj.get("objectKey") or obj.get("name"),
+        "label": obj.get("label") or obj.get("name"),
+        "objectType": (obj.get("objectType") or {}).get("name"),
+        "attributes": attrs,
+    }

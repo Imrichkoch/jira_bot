@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.ai_client import AIClient
-from app.analysis import cosine_similarity, extract_adf_text, overlap_keywords
+from app.analysis import cosine_similarity, extract_adf_text, flatten_assets_object, overlap_keywords
 from app.config import get_settings
 from app.jira_client import JiraClient
 from app.jql_guard import JQLValidationError, validate_jql
@@ -21,6 +21,12 @@ from app.schemas import (
     ChatResponse,
     CorrelateChangesRequest,
     CorrelateChangesResponse,
+    AssetsQueryRequest,
+    AssetsQueryResponse,
+    OffboardingChecklistRequest,
+    OffboardingChecklistResponse,
+    AssetsPrintProtocolRequest,
+    AssetsPrintProtocolResponse,
     SearchTicketsRequest,
     SearchTicketsResponse,
     SimilarTicketsRequest,
@@ -79,6 +85,28 @@ def _issue_text(fields: dict[str, Any]) -> str:
     summary = fields.get("summary") or ""
     desc = extract_adf_text(fields.get("description"))
     return f"{summary}\n{desc}".strip()
+
+
+def _require_assets_workspace() -> str:
+    workspace_id = settings.assets_workspace_id
+    if not workspace_id:
+        raise HTTPException(
+            status_code=400,
+            detail="ASSETS_WORKSPACE_ID is not configured. Add it to env file and restart service.",
+        )
+    return workspace_id
+
+
+def _assets_search_from_nl(nl_query: str, max_results: int) -> AssetsQueryResponse:
+    workspace_id = _require_assets_workspace()
+    aql = ai.generate_aql(user_query=nl_query)
+    data = jira.assets_query(workspace_id=workspace_id, aql=aql, max_results=max_results)
+    objects_raw = data.get("objectEntries") or data.get("results", {}).get("objectEntries") or []
+    objects = [flatten_assets_object(obj) for obj in objects_raw]
+    total = data.get("total")
+    if not isinstance(total, int):
+        total = len(objects)
+    return AssetsQueryResponse(aql=aql, total=total, objects=objects)
 
 
 def _load_service_catalog() -> list[dict[str, Any]]:
@@ -265,6 +293,93 @@ def correlate_changes(payload: CorrelateChangesRequest) -> CorrelateChangesRespo
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.post("/assets/search", response_model=AssetsQueryResponse)
+def assets_search(payload: AssetsQueryRequest) -> AssetsQueryResponse:
+    try:
+        return _assets_search_from_nl(payload.query, payload.max_results)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/offboarding/checklist", response_model=OffboardingChecklistResponse)
+def offboarding_checklist(payload: OffboardingChecklistRequest) -> OffboardingChecklistResponse:
+    try:
+        user_text = payload.user_identifier.replace('"', "")
+        jql = (
+            f"project = {settings.jira_project_key} "
+            f"AND updated >= -{payload.lookback_days}d "
+            f"AND text ~ \"{user_text}\" "
+            "AND (text ~ \"access\" OR text ~ \"account\" OR text ~ \"permission\" OR text ~ \"vpn\" OR text ~ \"mail\") "
+            "ORDER BY updated DESC"
+        )
+        result = jira.search_with_fields(
+            jql=jql,
+            fields=["summary", "status", "assignee", "updated", "created", "issuetype"],
+            max_results=payload.max_results,
+        )
+        issues = []
+        for issue in result.get("issues", []):
+            fields = issue.get("fields", {})
+            issues.append(
+                {
+                    "key": issue.get("key"),
+                    "summary": fields.get("summary"),
+                    "status": (fields.get("status") or {}).get("name"),
+                    "assignee": (fields.get("assignee") or {}).get("displayName"),
+                    "updated": fields.get("updated"),
+                    "issue_type": (fields.get("issuetype") or {}).get("name"),
+                }
+            )
+        checklist = ai.build_offboarding_checklist(
+            user_identifier=payload.user_identifier,
+            items_payload={"jql": jql, "tickets": issues},
+        )
+        return OffboardingChecklistResponse(
+            user_identifier=payload.user_identifier,
+            tickets_found=len(issues),
+            checklist=checklist,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/assets/print-protocol", response_model=AssetsPrintProtocolResponse)
+def assets_print_protocol(payload: AssetsPrintProtocolRequest) -> AssetsPrintProtocolResponse:
+    try:
+        result = _assets_search_from_nl(
+            nl_query=f"Find exact assets object for: {payload.object_query}",
+            max_results=payload.max_results,
+        )
+        if not result.objects:
+            raise HTTPException(status_code=404, detail="No Assets object found.")
+        obj = result.objects[0]
+        attrs = obj.get("attributes", {})
+        lines = [
+            f"# Odovzdavaci Protokol",
+            f"",
+            f"Object: {obj.get('label')}",
+            f"Object Key: {obj.get('objectKey')}",
+            f"Object Type: {obj.get('objectType')}",
+            f"",
+            f"## Attributes",
+        ]
+        for k, v in attrs.items():
+            lines.append(f"- {k}: {v}")
+        lines.extend(
+            [
+                "",
+                "## Potvrdenie",
+                "- Datum odovzdania: __________",
+                "- Odovzdal: __________",
+                "- Prevzal: __________",
+                "- Poznamka: __________",
+            ]
+        )
+        return AssetsPrintProtocolResponse(object_query=payload.object_query, protocol="\n".join(lines))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest) -> ChatResponse:
     try:
@@ -273,6 +388,7 @@ def chat(payload: ChatRequest) -> ChatResponse:
         search_hint = bool(re.search(r"\b(najdi|hladaj|search|find|list|vypis)\b", lower_message))
         summarize_hint = bool(re.search(r"\b(summary|summar|zhrn|sumariz|sprav summary)\b", lower_message))
         help_hint = bool(re.search(r"\b(help|pomoc|co vies|co dokazes|what can you do|capabilities)\b", lower_message))
+        assets_hint = "assets" in lower_message or "insight" in lower_message or "ci " in lower_message or "ci/" in lower_message
         create_count_match = re.search(r"\b(\d{1,2})\b", lower_message)
         create_count = int(create_count_match.group(1)) if create_count_match and create_hint and not search_hint else 1
         create_count = max(1, min(create_count, 10))
@@ -287,6 +403,8 @@ def chat(payload: ChatRequest) -> ChatResponse:
             action = "create"
         elif help_hint:
             action = "help"
+        elif assets_hint and action in {"search", ""}:
+            action = "assets_search"
 
         if action == "create":
             summary = parsed.get("summary") or payload.message[:250]
@@ -333,10 +451,41 @@ def chat(payload: ChatRequest) -> ChatResponse:
                 "2) Vytvorit viac ticketov: \"sprav 5 ticketov ...\"\n"
                 "3) Najst tickety textom: \"najdi otvorene tickety o ...\"\n"
                 "4) Spravit summary: \"sprav summary pre KAN-1\"\n"
-                "5) Vratim aj pouzite JQL pri vyhladavani.\n"
+                "5) Assets lookup: owner, HW inventory, job/file, SLA, DORA relevance\n"
+                "6) Offboarding checklist podla pristupov v Jira\n"
+                "7) Assets print protocol (odovzdavaci protokol)\n"
+                "8) Vratim aj pouzite JQL/AQL pri vyhladavani.\n"
                 "Tip: pis prirodzene, ja rozhodnem ci mam create/search/summarize."
             )
             return ChatResponse(action="help", message=help_text, data=None)
+
+        if action in {"assets_search", "assets_owner", "assets_hw", "assets_job_file", "assets_dora", "assets_sla"}:
+            assets_result = _assets_search_from_nl(parsed.get("query") or payload.message, payload.max_results)
+            return ChatResponse(
+                action=action,
+                message=f"Assets query returned {assets_result.total} object(s)",
+                data=assets_result.model_dump(),
+            )
+
+        if action == "offboarding":
+            m = re.search(r"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", payload.message)
+            user_identifier = m.group(1) if m else (parsed.get("query") or payload.message[:120])
+            checklist = offboarding_checklist(
+                OffboardingChecklistRequest(
+                    user_identifier=user_identifier,
+                    lookback_days=365,
+                    max_results=100,
+                )
+            )
+            return ChatResponse(
+                action="offboarding",
+                message=f"Offboarding checklist ready for {user_identifier}",
+                data=checklist.model_dump(),
+            )
+
+        if action == "assets_print":
+            protocol = assets_print_protocol(AssetsPrintProtocolRequest(object_query=parsed.get("query") or payload.message))
+            return ChatResponse(action="assets_print", message="Assets print protocol ready", data=protocol.model_dump())
 
         query = parsed.get("query") or payload.message
         search_result = _search_logic(query, payload.max_results)

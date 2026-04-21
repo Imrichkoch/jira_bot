@@ -23,6 +23,7 @@ Vypln `.env`:
 - `OPENAI_API_KEY` tvoj AI API kluc
 - `OPENAI_BASE_URL` nechaj prazdne pre OpenAI, alebo nastav na `https://openrouter.ai/api/v1` pre OpenRouter
 - `OPENROUTER_SITE_URL` a `OPENROUTER_APP_NAME` su volitelne, ale odporucane pri OpenRouter
+- `ASSETS_WORKSPACE_ID` workspace ID pre Jira Assets (nutne pre Assets endpointy)
 
 ## 2) Spustenie
 
@@ -148,6 +149,46 @@ Priklad:
   "top_k": 10
 }
 ```
+
+### Assets natural-language search (owner/HW/job-file/DORA/SLA)
+
+`POST /assets/search`
+
+Priklad:
+```json
+{
+  "query": "kto je owner service payroll-api",
+  "max_results": 20
+}
+```
+
+Poznamka: endpoint AI preklada text na AQL a robi query v Assets.
+
+### End of Contract - access checklist from Jira tickets
+
+`POST /offboarding/checklist`
+
+Priklad:
+```json
+{
+  "user_identifier": "john.doe@company.com",
+  "lookback_days": 365,
+  "max_results": 100
+}
+```
+
+### Print protocol in Jira Assets (odovzdavaci protokol)
+
+`POST /assets/print-protocol`
+
+Priklad:
+```json
+{
+  "object_query": "notebook imrich koch"
+}
+```
+
+Vrati markdown protokol s atributmi objektu.
 
 ## 4) Poznamky k bezpecnosti
 

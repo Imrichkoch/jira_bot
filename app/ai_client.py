@@ -72,10 +72,10 @@ class AIClient:
         instructions = (
             "You are an intent parser for Jira assistant.\n"
             "Return strictly JSON object only.\n"
-            "Supported actions: create, summarize, search, help.\n"
+            "Supported actions: create, summarize, search, help, assets_search, assets_owner, assets_hw, assets_job_file, assets_dora, assets_sla, offboarding, assets_print.\n"
             "JSON schema:\n"
             "{"
-            "\"action\":\"create|summarize|search|help\","
+            "\"action\":\"create|summarize|search|help|assets_search|assets_owner|assets_hw|assets_job_file|assets_dora|assets_sla|offboarding|assets_print\","
             "\"summary\":\"string or null\","
             "\"description\":\"string or null\","
             "\"issue_key\":\"string or null\","
@@ -87,10 +87,36 @@ class AIClient:
             "1) If user asks to create ticket/work item -> action=create.\n"
             "2) If user asks to summarize one ticket -> action=summarize and include issue_key if present.\n"
             "3) If user asks to find/search/list tickets -> action=search and include query.\n"
-            "4) If user asks what assistant can do, asks for help, or sends generic chat unrelated to Jira action -> action=help.\n"
+            "4) If user asks Assets owner lookup -> action=assets_owner.\n"
+            "5) If user asks Assets HW inventory for person -> action=assets_hw.\n"
+            "6) If user asks which job/file mapping in Assets -> action=assets_job_file.\n"
+            "7) If user asks DORA relevance from Assets -> action=assets_dora.\n"
+            "8) If user asks SLA/business impact from Assets -> action=assets_sla.\n"
+            "9) If user asks end-of-contract access list/checklist -> action=offboarding.\n"
+            "10) If user asks print protocol for Assets object -> action=assets_print.\n"
+            "11) If user asks what assistant can do or generic help -> action=help.\n"
             f"Default project_key: {default_project}\n"
             f"Default issue_type: {default_issue_type}\n"
             "If a field is unknown, set it to null."
         )
         output = self._text_response(instructions, user_message)
         return self._parse_json_object(output)
+
+    def generate_aql(self, *, user_query: str) -> str:
+        instructions = (
+            "You convert natural language into Jira Assets AQL query.\n"
+            "Return only plain AQL, no markdown, no explanation.\n"
+            "Prefer generic object types and attrs that are common: Name, Key, Owner, Department, Service, SLA Tier, Business Impact, File, Job, Hostname, Serial Number, Email.\n"
+            "Use contains matching with ~ where possible.\n"
+            "Keep query read-only."
+        )
+        return self._text_response(instructions, user_query)
+
+    def build_offboarding_checklist(self, *, user_identifier: str, items_payload: dict[str, Any]) -> str:
+        instructions = (
+            "You are IT offboarding assistant. Build concise checklist in markdown.\n"
+            "Sections: Immediate Revocations, System Access, Hardware Return, Communication, Final Validation.\n"
+            "Use provided Jira ticket list and mention ticket keys."
+        )
+        input_text = json.dumps({"user": user_identifier, "items": items_payload}, ensure_ascii=False)
+        return self._text_response(instructions, input_text)
