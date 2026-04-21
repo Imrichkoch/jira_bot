@@ -28,7 +28,7 @@ permissions:
   external:
     fetch:
       backend:
-        - "https://76.13.148.10:8080"
+        - "https://jira.raizenko.cloud"
 
 environment:
   variables:
