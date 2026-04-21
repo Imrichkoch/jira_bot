@@ -17,6 +17,8 @@ from app.schemas import (
     CreateTicketResponse,
     ClassifyIncidentRequest,
     ClassifyIncidentResponse,
+    AssignTicketRequest,
+    AssignTicketResponse,
     ChatRequest,
     ChatResponse,
     CorrelateChangesRequest,
@@ -109,6 +111,48 @@ def _assets_search_from_nl(nl_query: str, max_results: int) -> AssetsQueryRespon
     return AssetsQueryResponse(aql=aql, total=total, objects=objects)
 
 
+def _extract_issue_key(text: str) -> str | None:
+    match = re.search(r"\b[A-Z][A-Z0-9]+-\d+\b", text.upper())
+    return match.group(0) if match else None
+
+
+def _resolve_assignee_query(message: str, parsed: dict[str, Any]) -> str | None:
+    assignee = parsed.get("assignee")
+    if isinstance(assignee, str) and assignee.strip():
+        return assignee.strip()
+    m = re.search(r"(?:to|komu|na)\s+([a-zA-Z0-9._%+\-@ ]{2,80})$", message.strip(), flags=re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+    return None
+
+
+def _assign_ticket(issue_key: str, assignee_query: str) -> AssignTicketResponse:
+    candidates = jira.search_users(query=assignee_query, max_results=10)
+    if not candidates:
+        raise HTTPException(status_code=404, detail=f"No Jira user found for '{assignee_query}'.")
+
+    selected = None
+    q = assignee_query.lower()
+    for user in candidates:
+        dn = str(user.get("displayName") or "").lower()
+        em = str(user.get("emailAddress") or "").lower()
+        if q in dn or q in em:
+            selected = user
+            break
+    if selected is None:
+        selected = candidates[0]
+
+    account_id = selected.get("accountId")
+    if not account_id:
+        raise HTTPException(status_code=400, detail="Selected user has no accountId.")
+    jira.assign_issue(issue_key=issue_key, account_id=account_id)
+    return AssignTicketResponse(
+        issue_key=issue_key,
+        assignee_account_id=account_id,
+        assignee_display_name=selected.get("displayName") or "Unknown",
+    )
+
+
 def _load_service_catalog() -> list[dict[str, Any]]:
     catalog_path = BASE_DIR.parent / "service_catalog.json"
     if not catalog_path.exists():
@@ -154,6 +198,14 @@ def search_tickets(payload: SearchTicketsRequest) -> SearchTicketsResponse:
         return _search_logic(payload.query, payload.max_results)
     except JQLValidationError as exc:
         raise HTTPException(status_code=400, detail=f"Generated JQL rejected: {exc}") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/tickets/assign", response_model=AssignTicketResponse)
+def assign_ticket(payload: AssignTicketRequest) -> AssignTicketResponse:
+    try:
+        return _assign_ticket(payload.issue_key, payload.assignee_query)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -388,6 +440,9 @@ def chat(payload: ChatRequest) -> ChatResponse:
         search_hint = bool(re.search(r"\b(najdi|hladaj|search|find|list|vypis)\b", lower_message))
         summarize_hint = bool(re.search(r"\b(summary|summar|zhrn|sumariz|sprav summary)\b", lower_message))
         help_hint = bool(re.search(r"\b(help|pomoc|co vies|co dokazes|what can you do|capabilities)\b", lower_message))
+        assign_hint = bool(re.search(r"\b(assign|prirad|assigni|assigned|asignuj|daj)\b", lower_message)) and (
+            "ticket" in lower_message or "tiket" in lower_message
+        )
         assets_hint = "assets" in lower_message or "insight" in lower_message or "ci " in lower_message or "ci/" in lower_message
         create_count_match = re.search(r"\b(\d{1,2})\b", lower_message)
         create_count = int(create_count_match.group(1)) if create_count_match and create_hint and not search_hint else 1
@@ -401,6 +456,8 @@ def chat(payload: ChatRequest) -> ChatResponse:
         action = str(parsed.get("action", "")).lower().strip()
         if create_hint and not search_hint and not summarize_hint:
             action = "create"
+        elif assign_hint:
+            action = "assign"
         elif help_hint:
             action = "help"
         elif assets_hint and action in {"search", ""}:
@@ -444,6 +501,26 @@ def chat(payload: ChatRequest) -> ChatResponse:
                 data={"issue_key": issue_key, "summary": summary},
             )
 
+        if action == "assign":
+            issue_key = parsed.get("issue_key") or _extract_issue_key(payload.message) or payload.current_issue_key
+            if not issue_key:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Issue key missing. Please specify key like KAN-12 or select context ticket first.",
+                )
+            assignee_query = _resolve_assignee_query(payload.message, parsed)
+            if not assignee_query:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Assignee missing. Example: 'prirad KAN-12 na imrich'.",
+                )
+            assigned = _assign_ticket(issue_key, assignee_query)
+            return ChatResponse(
+                action="assign",
+                message=f"Issue {assigned.issue_key} assigned to {assigned.assignee_display_name}",
+                data=assigned.model_dump(),
+            )
+
         if action == "help":
             help_text = (
                 "Viem pracovat s Jira ticketmi cez chat:\n"
@@ -451,10 +528,11 @@ def chat(payload: ChatRequest) -> ChatResponse:
                 "2) Vytvorit viac ticketov: \"sprav 5 ticketov ...\"\n"
                 "3) Najst tickety textom: \"najdi otvorene tickety o ...\"\n"
                 "4) Spravit summary: \"sprav summary pre KAN-1\"\n"
-                "5) Assets lookup: owner, HW inventory, job/file, SLA, DORA relevance\n"
-                "6) Offboarding checklist podla pristupov v Jira\n"
-                "7) Assets print protocol (odovzdavaci protokol)\n"
-                "8) Vratim aj pouzite JQL/AQL pri vyhladavani.\n"
+                "5) Priradit ticket: \"prirad KAN-12 na imrich\"\n"
+                "6) Assets lookup: owner, HW inventory, job/file, SLA, DORA relevance\n"
+                "7) Offboarding checklist podla pristupov v Jira\n"
+                "8) Assets print protocol (odovzdavaci protokol)\n"
+                "9) Vratim aj pouzite JQL/AQL pri vyhladavani.\n"
                 "Tip: pis prirodzene, ja rozhodnem ci mam create/search/summarize."
             )
             return ChatResponse(action="help", message=help_text, data=None)

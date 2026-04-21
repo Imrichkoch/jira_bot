@@ -102,6 +102,23 @@ class JiraClient:
         }
         return self._request("POST", "/rest/api/3/search/jql", json=payload)
 
+    def search_users(self, *, query: str, max_results: int = 20) -> list[dict[str, Any]]:
+        data = self._request(
+            "GET",
+            "/rest/api/3/user/search",
+            params={"query": query, "maxResults": max_results},
+        )
+        if isinstance(data, list):
+            return data
+        return []
+
+    def assign_issue(self, *, issue_key: str, account_id: str) -> None:
+        self._request(
+            "PUT",
+            f"/rest/api/3/issue/{issue_key}/assignee",
+            json={"accountId": account_id},
+        )
+
     def assets_query(self, *, workspace_id: str, aql: str, max_results: int = 50) -> dict[str, Any]:
         payload = {
             "qlQuery": aql,

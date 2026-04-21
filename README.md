@@ -74,6 +74,18 @@ Priklad body:
 }
 ```
 
+### Assign ticket
+
+`POST /tickets/assign`
+
+Priklad body:
+```json
+{
+  "issue_key": "KAN-12",
+  "assignee_query": "imrich"
+}
+```
+
 ### Summarize ticket
 
 `POST /tickets/summarize`

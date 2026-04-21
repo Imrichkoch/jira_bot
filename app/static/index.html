@@ -117,6 +117,7 @@
     const formEl = document.getElementById("form");
     const inputEl = document.getElementById("input");
     const sendEl = document.getElementById("send");
+    let currentIssueKey = null;
 
     function addBubble(text, role) {
       const el = document.createElement("div");
@@ -143,6 +144,31 @@
       return lines.join("\n");
     }
 
+    function captureContextIssue(data) {
+      if (!data || !data.data) return;
+      if (typeof data.data.issue_key === "string") {
+        currentIssueKey = data.data.issue_key;
+        return;
+      }
+      if (typeof data.data.key === "string") {
+        currentIssueKey = data.data.key;
+        return;
+      }
+      if (Array.isArray(data.data.created) && data.data.created.length) {
+        const last = data.data.created[data.data.created.length - 1];
+        if (last && typeof last.key === "string") {
+          currentIssueKey = last.key;
+          return;
+        }
+      }
+      if (Array.isArray(data.data.issues) && data.data.issues.length) {
+        const first = data.data.issues[0];
+        if (first && typeof first.key === "string") {
+          currentIssueKey = first.key;
+        }
+      }
+    }
+
     addBubble("Ahoj, som Jira bot. Napis, co potrebujes urobit s ticketmi.", "bot");
 
     formEl.addEventListener("submit", async (e) => {
@@ -158,12 +184,13 @@
         const res = await fetch("/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message, max_results: 20, max_comments: 20 }),
+          body: JSON.stringify({ message, max_results: 20, max_comments: 20, current_issue_key: currentIssueKey }),
         });
         const data = await res.json();
         if (!res.ok) {
           addBubble(`Error: ${data.detail || "Request failed"}`, "bot");
         } else {
+          captureContextIssue(data);
           addBubble(normalizeResponse(data), "bot");
         }
       } catch (err) {

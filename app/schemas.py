@@ -41,12 +41,24 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=2, max_length=4000)
     max_results: int = Field(default=20, ge=1, le=50)
     max_comments: int = Field(default=20, ge=0, le=100)
+    current_issue_key: str | None = None
 
 
 class ChatResponse(BaseModel):
     action: str
     message: str
     data: dict[str, Any] | None = None
+
+
+class AssignTicketRequest(BaseModel):
+    issue_key: str
+    assignee_query: str = Field(min_length=2, max_length=255)
+
+
+class AssignTicketResponse(BaseModel):
+    issue_key: str
+    assignee_account_id: str
+    assignee_display_name: str
 
 
 class SimilarTicketsRequest(BaseModel):
