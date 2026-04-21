@@ -1,5 +1,6 @@
 import re
 import json
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -157,6 +158,62 @@ def _assets_search_from_nl(nl_query: str, max_results: int) -> AssetsQueryRespon
 def _extract_issue_key(text: str) -> str | None:
     match = re.search(r"\b[A-Z][A-Z0-9]+-\d+\b", text.upper())
     return match.group(0) if match else None
+
+
+def _normalize_lookup_text(value: str) -> str:
+    text = unicodedata.normalize("NFKD", value or "")
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def _extract_person_query(text: str) -> str | None:
+    normalized = text.strip()
+    if not normalized:
+        return None
+    match = re.search(r"\b(?:pre|for|user|pouzivatel|pouzivatela)\b[:\s-]*(.+)$", normalized, flags=re.IGNORECASE)
+    if match:
+        candidate = match.group(1).strip(" .,:;!?()[]{}\"'")
+        return candidate if len(candidate) >= 2 else None
+    return None
+
+
+def _resolve_user_for_assets(user_query: str) -> dict[str, Any] | None:
+    users = jira.search_users(query=user_query, max_results=20)
+    if not users:
+        users = jira.list_assignable_users(project_key=settings.jira_project_key, max_results=100)
+    if not users:
+        return None
+    query_n = _normalize_lookup_text(user_query)
+    query_tokens = set(re.findall(r"[a-z0-9]{2,}", query_n))
+    best_user = users[0]
+    best_score = -1
+    for u in users:
+        dn = str(u.get("displayName") or "")
+        em = str(u.get("emailAddress") or "")
+        text_n = _normalize_lookup_text(f"{dn} {em}")
+        score = 0
+        for token in query_tokens:
+            if token in text_n:
+                score += 1
+        if query_n and query_n in text_n:
+            score += 5
+        if score > best_score:
+            best_score = score
+            best_user = u
+    return best_user
+
+
+def _assets_text(obj: dict[str, Any]) -> str:
+    attrs = obj.get("attributes") or {}
+    return _normalize_lookup_text(
+        f"{obj.get('label','')} {obj.get('objectKey','')} {obj.get('objectType','')} {json.dumps(attrs, ensure_ascii=False)}"
+    )
+
+
+def _is_hw_like(obj: dict[str, Any]) -> bool:
+    text = _assets_text(obj)
+    hw_words = ["laptop", "notebook", "computer", "pc", "hardware", "device", "workstation", "serial"]
+    return any(w in text for w in hw_words)
 
 
 def _extract_issue_key_from_history(history: list[dict[str, str]] | None) -> str | None:
@@ -533,16 +590,91 @@ def assets_print_protocol(payload: AssetsPrintProtocolRequest) -> AssetsPrintPro
         workspace_id = _require_assets_workspace()
         key_match = re.search(r"\bCDX-\d+\b", payload.object_query.upper())
         obj = None
+        matched_user = None
+        user_assets: list[dict[str, Any]] = []
         if key_match:
             raw = jira.get_asset_object(workspace_id=workspace_id, object_id_or_key=key_match.group(0))
             obj = flatten_assets_object(raw)
         else:
+            person_query = _extract_person_query(payload.object_query) or payload.object_query.strip()
+            if person_query:
+                matched_user = _resolve_user_for_assets(person_query)
+            if matched_user:
+                display_name = str(matched_user.get("displayName") or "")
+                email = str(matched_user.get("emailAddress") or "")
+                account_id = str(matched_user.get("accountId") or "")
+                data = jira.assets_query(
+                    workspace_id=workspace_id,
+                    aql="objectId > 0",
+                    max_results=max(300, payload.max_results * 50),
+                )
+                objects_raw = (
+                    data.get("objectEntries")
+                    or data.get("results", {}).get("objectEntries")
+                    or data.get("values")
+                    or []
+                )
+                objects = [flatten_assets_object(o) for o in objects_raw]
+                detailed_objects: list[dict[str, Any]] = []
+                for base_obj in objects[:120]:
+                    object_id_or_key = str(base_obj.get("objectKey") or base_obj.get("id") or "").strip()
+                    if not object_id_or_key:
+                        continue
+                    try:
+                        raw_detail = jira.get_asset_object(workspace_id=workspace_id, object_id_or_key=object_id_or_key)
+                        detailed_objects.append(flatten_assets_object(raw_detail))
+                    except Exception:
+                        detailed_objects.append(base_obj)
+                objects = detailed_objects
+                user_tokens = [t for t in [display_name, email, account_id, person_query] if t]
+                for candidate in objects:
+                    text = _assets_text(candidate)
+                    if any(_normalize_lookup_text(token) in text for token in user_tokens):
+                        user_assets.append(candidate)
+                hw_assets = [a for a in user_assets if _is_hw_like(a)]
+                if hw_assets:
+                    user_assets = hw_assets
+            if user_assets:
+                lines = [
+                    "# Odovzdavaci Protokol",
+                    "",
+                    f"Pouzivatel: {matched_user.get('displayName')}",
+                ]
+                if matched_user.get("emailAddress"):
+                    lines.append(f"Email: {matched_user.get('emailAddress')}")
+                lines.extend(["", "## Pridelene zariadenia"])
+                for asset in user_assets[:25]:
+                    lines.append(f"- {asset.get('objectKey')}: {asset.get('label')} ({asset.get('objectType')})")
+                    attrs = asset.get("attributes") or {}
+                    for k, v in attrs.items():
+                        if str(k).lower() in {"key", "created", "updated"}:
+                            continue
+                        lines.append(f"  - {k}: {v}")
+                lines.extend(
+                    [
+                        "",
+                        "## Potvrdenie",
+                        "- Datum odovzdania: __________",
+                        "- Odovzdal: __________",
+                        "- Prevzal: __________",
+                        "- Poznamka: __________",
+                    ]
+                )
+                return AssetsPrintProtocolResponse(object_query=payload.object_query, protocol="\n".join(lines))
+
             result = _assets_search_from_nl(
                 nl_query=f"Find exact assets object for: {payload.object_query}",
                 max_results=max(payload.max_results, 5),
             )
             if result.objects:
                 obj = result.objects[0]
+                object_id_or_key = str(obj.get("objectKey") or obj.get("id") or "").strip()
+                if object_id_or_key:
+                    try:
+                        raw_detail = jira.get_asset_object(workspace_id=workspace_id, object_id_or_key=object_id_or_key)
+                        obj = flatten_assets_object(raw_detail)
+                    except Exception:
+                        pass
 
         if not obj:
             raise HTTPException(status_code=404, detail="No Assets object found.")
