@@ -105,6 +105,10 @@ def _require_assets_workspace() -> str:
     return workspace_id
 
 
+def _assets_enabled() -> bool:
+    return bool(settings.assets_workspace_id)
+
+
 def _assets_search_from_nl(nl_query: str, max_results: int) -> AssetsQueryResponse:
     workspace_id = _require_assets_workspace()
     aql = ai.generate_aql(user_query=nl_query)
@@ -464,6 +468,8 @@ def chat(payload: ChatRequest) -> ChatResponse:
         search_hint = bool(re.search(r"\b(najdi|hladaj|search|find|list|vypis)\b", lower_message))
         summarize_hint = bool(re.search(r"\b(summary|summar|zhrn|sumariz|sprav summary)\b", lower_message))
         help_hint = bool(re.search(r"\b(help|pomoc|co vies|co dokazes|what can you do|capabilities)\b", lower_message))
+        greeting_hint = bool(re.search(r"\b(ahoj|cau|čau|halo|hello|hi|hey)\b", lower_message.strip()))
+        thanks_hint = bool(re.search(r"\b(dakujem|ďakujem|thanks|thank you|thx)\b", lower_message))
         assign_hint = bool(re.search(r"\b(assign|prirad|assigni|assigned|asignuj)\b", lower_message)) and (
             "ticket" in lower_message or "tiket" in lower_message
         )
@@ -489,6 +495,8 @@ def chat(payload: ChatRequest) -> ChatResponse:
             action = "list_users"
         elif list_tickets_hint:
             action = "list_tickets"
+        elif greeting_hint or thanks_hint:
+            action = "smalltalk"
         elif create_hint and not search_hint and not summarize_hint:
             action = "create"
         elif assign_hint:
@@ -609,24 +617,44 @@ def chat(payload: ChatRequest) -> ChatResponse:
             )
 
         if action == "help":
-            help_text = (
-                "Viem pracovat s Jira ticketmi cez chat:\n"
-                "1) Vytvorit ticket: \"vytvor ticket: ...\"\n"
-                "2) Vytvorit viac ticketov: \"sprav 5 ticketov ...\"\n"
-                "3) Najst tickety textom: \"najdi otvorene tickety o ...\"\n"
-                "4) Spravit summary: \"sprav summary pre KAN-1\"\n"
-                "5) Priradit ticket: \"prirad KAN-12 na imrich\"\n"
-                "6) Zoznam ticketov: \"daj mi zoznam tiketov\"\n"
-                "7) Zoznam userov: \"daj mi zoznam userov\"\n"
-                "8) Assets lookup: owner, HW inventory, job/file, SLA, DORA relevance\n"
-                "9) Offboarding checklist podla pristupov v Jira\n"
-                "10) Assets print protocol (odovzdavaci protokol)\n"
-                "11) Vratim aj pouzite JQL/AQL pri vyhladavani.\n"
-                "Tip: pis prirodzene, ja rozhodnem ci mam create/search/summarize."
-            )
+            lines = [
+                "Viem pracovat s Jira ticketmi cez chat:",
+                "1) Vytvorit ticket: \"vytvor ticket: ...\"",
+                "2) Vytvorit viac ticketov: \"sprav 5 ticketov ...\"",
+                "3) Najst tickety textom: \"najdi otvorene tickety o ...\"",
+                "4) Spravit summary: \"sprav summary pre KAN-1\"",
+                "5) Priradit ticket: \"prirad KAN-12 na imrich\"",
+                "6) Zoznam ticketov: \"daj mi zoznam tiketov\"",
+                "7) Zoznam userov: \"daj mi zoznam userov\"",
+                "8) Offboarding checklist podla pristupov v Jira",
+            ]
+            if _assets_enabled():
+                lines.extend(
+                    [
+                        "9) Assets lookup: owner, HW inventory, job/file, SLA, DORA relevance",
+                        "10) Assets print protocol (odovzdavaci protokol)",
+                    ]
+                )
+            lines.append("Tip: pis prirodzene, ja rozhodnem co mam urobit.")
+            help_text = "\n".join(lines)
             return ChatResponse(action="help", message=help_text, data=None)
 
+        if action == "smalltalk":
+            if thanks_hint:
+                return ChatResponse(action="smalltalk", message="Rado sa stalo. Kludne napis, co mam s tiketmi urobit dalej.", data=None)
+            return ChatResponse(
+                action="smalltalk",
+                message="Ahoj. Viem vytvarat, hladat, sumarizovat a priradovat Jira tickety. Napis napr. \"daj mi zoznam tiketov\".",
+                data=None,
+            )
+
         if action in {"assets_search", "assets_owner", "assets_hw", "assets_job_file", "assets_dora", "assets_sla"}:
+            if not _assets_enabled():
+                return ChatResponse(
+                    action=action,
+                    message="Assets funkcie su docasne nedostupne, lebo nie je nastavene ASSETS_WORKSPACE_ID alebo chybaju prava.",
+                    data=None,
+                )
             assets_result = _assets_search_from_nl(parsed.get("query") or payload.message, payload.max_results)
             return ChatResponse(
                 action=action,
@@ -651,6 +679,12 @@ def chat(payload: ChatRequest) -> ChatResponse:
             )
 
         if action == "assets_print":
+            if not _assets_enabled():
+                return ChatResponse(
+                    action="assets_print",
+                    message="Assets print protocol je docasne nedostupny, lebo nie je nastavene ASSETS_WORKSPACE_ID alebo chybaju prava.",
+                    data=None,
+                )
             protocol = assets_print_protocol(AssetsPrintProtocolRequest(object_query=parsed.get("query") or payload.message))
             return ChatResponse(action="assets_print", message="Assets print protocol ready", data=protocol.model_dump())
 
