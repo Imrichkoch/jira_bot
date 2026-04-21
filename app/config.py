@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     openrouter_site_url: str | None = None
     openrouter_app_name: str = "jira-ai-ticket-bot"
     assets_workspace_id: str | None = None
+    widget_shared_secret: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",

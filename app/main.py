@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -1013,3 +1013,11 @@ def chat(payload: ChatRequest) -> ChatResponse:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/chat/widget", response_model=ChatResponse)
+def chat_widget(payload: ChatRequest, x_widget_secret: str | None = Header(default=None)) -> ChatResponse:
+    expected = settings.widget_shared_secret
+    if expected and x_widget_secret != expected:
+        raise HTTPException(status_code=401, detail="Unauthorized widget request.")
+    return chat(payload)

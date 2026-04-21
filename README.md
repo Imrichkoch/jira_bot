@@ -213,3 +213,16 @@ Vrati markdown protokol s atributmi objektu.
 - `/tickets/update` endpoint
 - deduplikacia pri create (podla fingerprintu)
 - Slack/Teams chat vrstva nad tymto API
+
+## 6) Chat widget v Jira (Forge)
+
+Endpoint pre Forge widget:
+- `POST /chat/widget`
+- pouziva rovnaku logiku ako `/chat`
+- ak je nastavene `WIDGET_SHARED_SECRET`, vyzaduje hlavicku `x-widget-secret`
+
+Forge app skeleton je v:
+- `forge-jira-chat`
+
+Nasadenie je popisane v:
+- `forge-jira-chat/README.md`
