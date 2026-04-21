@@ -1,3 +1,8 @@
+app:
+  runtime:
+    name: nodejs22.x
+  id: ari:cloud:ecosystem::app/1124e232-be9d-40e9-84ca-970df72827b5
+
 modules:
   jira:issuePanel:
     - key: jira-ai-chat-panel
@@ -8,7 +13,7 @@ modules:
       icon: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
   function:
     - key: resolver
-      handler: src/index.handler
+      handler: index.handler
 
 resources:
   - key: chat-panel
@@ -23,7 +28,6 @@ permissions:
   external:
     fetch:
       backend:
-        - "http://76.13.148.10:8080"
         - "https://76.13.148.10:8080"
 
 environment:
