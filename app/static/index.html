@@ -118,6 +118,7 @@
     const inputEl = document.getElementById("input");
     const sendEl = document.getElementById("send");
     let currentIssueKey = null;
+    let pendingAction = null;
     const conversation = [];
 
     function addBubble(text, role) {
@@ -160,6 +161,11 @@
 
     function captureContextIssue(data) {
       if (!data || !data.data) return;
+      if (data.data.pending_action) {
+        pendingAction = data.data.pending_action;
+      } else if (data.action !== "chat") {
+        pendingAction = null;
+      }
       if (typeof data.data.issue_key === "string") {
         currentIssueKey = data.data.issue_key;
         return;
@@ -206,6 +212,7 @@
             max_comments: 20,
             current_issue_key: currentIssueKey,
             history: conversation.slice(-20),
+            pending_action: pendingAction,
           }),
         });
         const data = await res.json();

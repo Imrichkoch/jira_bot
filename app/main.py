@@ -173,6 +173,46 @@ def _assign_ticket(issue_key: str, assignee_query: str) -> AssignTicketResponse:
     )
 
 
+def _resolve_assignee_user(assignee_query: str) -> dict[str, Any]:
+    candidates = jira.search_users(query=assignee_query, max_results=10)
+    if not candidates:
+        raise HTTPException(status_code=404, detail=f"No Jira user found for '{assignee_query}'.")
+    selected = None
+    q = assignee_query.lower()
+    for user in candidates:
+        dn = str(user.get("displayName") or "").lower()
+        em = str(user.get("emailAddress") or "").lower()
+        if q in dn or q in em:
+            selected = user
+            break
+    return selected or candidates[0]
+
+
+def _assign_all_unassigned(assignee_query: str, max_results: int = 200) -> dict[str, Any]:
+    user = _resolve_assignee_user(assignee_query)
+    account_id = user.get("accountId")
+    if not account_id:
+        raise HTTPException(status_code=400, detail="Selected user has no accountId.")
+
+    jql = f"project = {settings.jira_project_key} AND assignee IS EMPTY ORDER BY updated DESC"
+    result = jira.search_with_fields(
+        jql=jql,
+        fields=["summary", "assignee"],
+        max_results=max_results,
+    )
+    keys = [i.get("key") for i in result.get("issues", []) if i.get("key")]
+    assigned_keys: list[str] = []
+    for key in keys:
+        jira.assign_issue(issue_key=key, account_id=account_id)
+        assigned_keys.append(key)
+    return {
+        "assignee_display_name": user.get("displayName") or "Unknown",
+        "assignee_account_id": account_id,
+        "assigned_count": len(assigned_keys),
+        "assigned_keys": assigned_keys,
+    }
+
+
 def _load_service_catalog() -> list[dict[str, Any]]:
     catalog_path = BASE_DIR.parent / "service_catalog.json"
     if not catalog_path.exists():
@@ -464,6 +504,7 @@ def chat(payload: ChatRequest) -> ChatResponse:
         model_input = payload.message if not history_text else f"Recent chat history:\n{history_text}\n\nUser: {payload.message}"
 
         lower_message = payload.message.lower()
+        yes_all_hint = bool(re.search(r"\b(vsetky|všetky|all|ano|áno|ok)\b", lower_message))
         create_hint = bool(re.search(r"\b(vytvor|sprav|vyrob|create|make)\b", lower_message)) and "ticket" in lower_message
         search_hint = bool(re.search(r"\b(najdi|hladaj|search|find|list|vypis)\b", lower_message))
         summarize_hint = bool(re.search(r"\b(summary|summar|zhrn|sumariz|sprav summary)\b", lower_message))
@@ -505,6 +546,18 @@ def chat(payload: ChatRequest) -> ChatResponse:
             action = "help"
         elif assets_hint and action in {"search", ""}:
             action = "assets_search"
+
+        pending = payload.pending_action or {}
+        if pending.get("type") == "assign_all_unassigned" and yes_all_hint:
+            assignee_query = str(pending.get("assignee_query") or "").strip()
+            if not assignee_query:
+                raise HTTPException(status_code=400, detail="Pending assign action is missing assignee_query.")
+            bulk = _assign_all_unassigned(assignee_query, max_results=500)
+            return ChatResponse(
+                action="assign_bulk",
+                message=f"Hotovo. Priradil som {bulk['assigned_count']} neassignovanych ticketov na {bulk['assignee_display_name']}.",
+                data=bulk,
+            )
 
         if action == "create":
             summary = parsed.get("summary") or payload.message[:250]
@@ -553,16 +606,30 @@ def chat(payload: ChatRequest) -> ChatResponse:
                 or payload.current_issue_key
                 or _extract_issue_key_from_history(payload.history)
             )
-            if not issue_key:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Issue key missing. Please specify key like KAN-12 or select context ticket first.",
-                )
             assignee_query = _resolve_assignee_query(payload.message, parsed)
             if not assignee_query:
                 raise HTTPException(
                     status_code=400,
                     detail="Assignee missing. Example: 'prirad KAN-12 na imrich'.",
+                )
+            wants_all = bool(re.search(r"\b(vsetky|všetky|all|neassignovane|nepriradene)\b", lower_message))
+            if wants_all and not issue_key:
+                bulk = _assign_all_unassigned(assignee_query, max_results=500)
+                return ChatResponse(
+                    action="assign_bulk",
+                    message=f"Hotovo. Priradil som {bulk['assigned_count']} neassignovanych ticketov na {bulk['assignee_display_name']}.",
+                    data=bulk,
+                )
+            if not issue_key:
+                user = _resolve_assignee_user(assignee_query)
+                return ChatResponse(
+                    action="chat",
+                    message=(
+                        f"Nasiel som pouzivatela {user.get('displayName')}. "
+                        "Chces, aby som mu priradil vsetky neassignovane tickety? "
+                        "Napis \"vsetky\" alebo \"ano\"."
+                    ),
+                    data={"pending_action": {"type": "assign_all_unassigned", "assignee_query": assignee_query}},
                 )
             assigned = _assign_ticket(issue_key, assignee_query)
             return ChatResponse(
