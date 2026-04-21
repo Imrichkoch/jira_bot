@@ -118,6 +118,7 @@
     const inputEl = document.getElementById("input");
     const sendEl = document.getElementById("send");
     let currentIssueKey = null;
+    const conversation = [];
 
     function addBubble(text, role) {
       const el = document.createElement("div");
@@ -125,6 +126,13 @@
       el.textContent = text;
       chatEl.appendChild(el);
       chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    function addToConversation(role, content) {
+      conversation.push({ role, content: String(content || "") });
+      if (conversation.length > 40) {
+        conversation.splice(0, conversation.length - 40);
+      }
     }
 
     function normalizeResponse(data) {
@@ -176,6 +184,7 @@
     }
 
     addBubble("Ahoj, som Jira bot. Napis, co potrebujes urobit s ticketmi.", "bot");
+    addToConversation("assistant", "Ahoj, som Jira bot. Napis, co potrebujes urobit s ticketmi.");
 
     formEl.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -183,6 +192,7 @@
       if (!message) return;
 
       addBubble(message, "user");
+      addToConversation("user", message);
       inputEl.value = "";
       sendEl.disabled = true;
 
@@ -190,14 +200,23 @@
         const res = await fetch("/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message, max_results: 20, max_comments: 20, current_issue_key: currentIssueKey }),
+          body: JSON.stringify({
+            message,
+            max_results: 20,
+            max_comments: 20,
+            current_issue_key: currentIssueKey,
+            history: conversation.slice(-20),
+          }),
         });
         const data = await res.json();
         if (!res.ok) {
           addBubble(`Error: ${data.detail || "Request failed"}`, "bot");
+          addToConversation("assistant", `Error: ${data.detail || "Request failed"}`);
         } else {
           captureContextIssue(data);
-          addBubble(normalizeResponse(data), "bot");
+          const normalized = normalizeResponse(data);
+          addBubble(normalized, "bot");
+          addToConversation("assistant", normalized);
         }
       } catch (err) {
         addBubble(`Error: ${err.message}`, "bot");

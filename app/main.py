@@ -122,6 +122,16 @@ def _extract_issue_key(text: str) -> str | None:
     return match.group(0) if match else None
 
 
+def _extract_issue_key_from_history(history: list[dict[str, str]] | None) -> str | None:
+    if not history:
+        return None
+    for item in reversed(history):
+        key = _extract_issue_key(item.get("content") or "")
+        if key:
+            return key
+    return None
+
+
 def _resolve_assignee_query(message: str, parsed: dict[str, Any]) -> str | None:
     assignee = parsed.get("assignee")
     if isinstance(assignee, str) and assignee.strip():
@@ -441,6 +451,14 @@ def assets_print_protocol(payload: AssetsPrintProtocolRequest) -> AssetsPrintPro
 @app.post("/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest) -> ChatResponse:
     try:
+        history = payload.history or []
+        history_tail = history[-12:]
+        history_text = "\n".join(
+            f"{(h.get('role') or 'unknown')}: {(h.get('content') or '')[:500]}"
+            for h in history_tail
+        ).strip()
+        model_input = payload.message if not history_text else f"Recent chat history:\n{history_text}\n\nUser: {payload.message}"
+
         lower_message = payload.message.lower()
         create_hint = bool(re.search(r"\b(vytvor|sprav|vyrob|create|make)\b", lower_message)) and "ticket" in lower_message
         search_hint = bool(re.search(r"\b(najdi|hladaj|search|find|list|vypis)\b", lower_message))
@@ -462,7 +480,7 @@ def chat(payload: ChatRequest) -> ChatResponse:
         create_count = max(1, min(create_count, 10))
 
         parsed = ai.detect_chat_action(
-            user_message=payload.message,
+            user_message=model_input,
             default_project=settings.jira_project_key,
             default_issue_type=settings.jira_default_issue_type,
         )
@@ -508,6 +526,8 @@ def chat(payload: ChatRequest) -> ChatResponse:
                 match = re.search(r"\b[A-Z][A-Z0-9]+-\d+\b", payload.message)
                 issue_key = match.group(0) if match else None
             if not issue_key:
+                issue_key = payload.current_issue_key or _extract_issue_key_from_history(payload.history)
+            if not issue_key:
                 raise HTTPException(status_code=400, detail="Issue key not found. Example: KAN-1")
             issue = jira.get_issue(issue_key)
             comments = jira.get_comments(issue_key, max_results=payload.max_comments)
@@ -519,7 +539,12 @@ def chat(payload: ChatRequest) -> ChatResponse:
             )
 
         if action == "assign":
-            issue_key = parsed.get("issue_key") or _extract_issue_key(payload.message) or payload.current_issue_key
+            issue_key = (
+                parsed.get("issue_key")
+                or _extract_issue_key(payload.message)
+                or payload.current_issue_key
+                or _extract_issue_key_from_history(payload.history)
+            )
             if not issue_key:
                 raise HTTPException(
                     status_code=400,

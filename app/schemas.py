@@ -42,6 +42,7 @@ class ChatRequest(BaseModel):
     max_results: int = Field(default=20, ge=1, le=50)
     max_comments: int = Field(default=20, ge=0, le=100)
     current_issue_key: str | None = None
+    history: list[dict[str, str]] | None = None
 
 
 class ChatResponse(BaseModel):
