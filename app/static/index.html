@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Jira AI Chat Bot</title>
+  <style>
+    :root {
+      --bg: #0b1220;
+      --panel: #131c2f;
+      --text: #e6edf7;
+      --muted: #99a9c4;
+      --accent: #3aa3ff;
+      --user: #1e7de6;
+      --bot: #1b2842;
+      --border: #2a3b5b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      background: radial-gradient(circle at top right, #1a2a4a, var(--bg) 55%);
+      color: var(--text);
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 16px;
+    }
+    .app {
+      width: min(900px, 100%);
+      height: min(88vh, 900px);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgba(19,28,47,.95), rgba(14,22,37,.95));
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      overflow: hidden;
+      box-shadow: 0 18px 50px rgba(0,0,0,.45);
+    }
+    .header {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .title { font-weight: 700; letter-spacing: 0.2px; }
+    .hint { color: var(--muted); font-size: 13px; }
+    .chat {
+      padding: 18px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .bubble {
+      max-width: 82%;
+      padding: 11px 13px;
+      border-radius: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .user { align-self: flex-end; background: var(--user); }
+    .bot {
+      align-self: flex-start;
+      background: var(--bot);
+      border: 1px solid var(--border);
+    }
+    .composer {
+      border-top: 1px solid var(--border);
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      padding: 12px;
+    }
+    textarea {
+      width: 100%;
+      resize: none;
+      min-height: 54px;
+      max-height: 180px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #0e1628;
+      color: var(--text);
+      padding: 12px;
+      outline: none;
+      font: inherit;
+    }
+    button {
+      border: 0;
+      border-radius: 10px;
+      background: var(--accent);
+      color: #08101c;
+      font-weight: 700;
+      padding: 0 18px;
+      cursor: pointer;
+    }
+    button:disabled { opacity: .6; cursor: wait; }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="header">
+      <div class="title">Jira AI Chat Bot</div>
+      <div class="hint">Try: "Najdi otvorene tickety" alebo "Sprav summary pre KAN-1"</div>
+    </header>
+    <section class="chat" id="chat"></section>
+    <form class="composer" id="form">
+      <textarea id="input" placeholder="Napíš správu..." required></textarea>
+      <button id="send" type="submit">Send</button>
+    </form>
+  </main>
+
+  <script>
+    const chatEl = document.getElementById("chat");
+    const formEl = document.getElementById("form");
+    const inputEl = document.getElementById("input");
+    const sendEl = document.getElementById("send");
+
+    function addBubble(text, role) {
+      const el = document.createElement("div");
+      el.className = `bubble ${role}`;
+      el.textContent = text;
+      chatEl.appendChild(el);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    function normalizeResponse(data) {
+      const lines = [];
+      lines.push(`${data.message || "Done."}`);
+      if (data.action) lines.push(`Action: ${data.action}`);
+      if (data.data?.jql) lines.push(`JQL: ${data.data.jql}`);
+      if (typeof data.data?.total === "number") lines.push(`Total: ${data.data.total}`);
+      if (data.data?.summary) lines.push(`\n${data.data.summary}`);
+      if (data.data?.key) lines.push(`Ticket: ${data.data.key}`);
+      if (Array.isArray(data.data?.issues) && data.data.issues.length) {
+        lines.push("\nIssues:");
+        for (const it of data.data.issues.slice(0, 8)) {
+          lines.push(`- ${it.key}: ${it.summary || "(no summary)"}`);
+        }
+      }
+      return lines.join("\n");
+    }
+
+    addBubble("Ahoj, som Jira bot. Napis, co potrebujes urobit s ticketmi.", "bot");
+
+    formEl.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const message = inputEl.value.trim();
+      if (!message) return;
+
+      addBubble(message, "user");
+      inputEl.value = "";
+      sendEl.disabled = true;
+
+      try {
+        const res = await fetch("/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message, max_results: 20, max_comments: 20 }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          addBubble(`Error: ${data.detail || "Request failed"}`, "bot");
+        } else {
+          addBubble(normalizeResponse(data), "bot");
+        }
+      } catch (err) {
+        addBubble(`Error: ${err.message}`, "bot");
+      } finally {
+        sendEl.disabled = false;
+        inputEl.focus();
+      }
+    });
+
+    inputEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        formEl.requestSubmit();
+      }
+    });
+  </script>
+</body>
+</html>
