@@ -112,13 +112,35 @@ def _assets_enabled() -> bool:
 def _assets_search_from_nl(nl_query: str, max_results: int) -> AssetsQueryResponse:
     workspace_id = _require_assets_workspace()
     aql = ai.generate_aql(user_query=nl_query)
-    data = jira.assets_query(workspace_id=workspace_id, aql=aql, max_results=max_results)
-    objects_raw = data.get("objectEntries") or data.get("results", {}).get("objectEntries") or []
+    data = None
+    used_aql = aql
+    try:
+        data = jira.assets_query(workspace_id=workspace_id, aql=aql, max_results=max_results)
+    except Exception:
+        # Fallback for invalid AQL or unknown attributes in custom schemas.
+        fallback = "objectId > 0"
+        data = jira.assets_query(workspace_id=workspace_id, aql=fallback, max_results=max(100, max_results))
+        used_aql = fallback
+
+    objects_raw = data.get("objectEntries") or data.get("results", {}).get("objectEntries") or data.get("values") or []
     objects = [flatten_assets_object(obj) for obj in objects_raw]
+    if used_aql == "objectId > 0" and nl_query.strip():
+        terms = [t for t in re.findall(r"[a-zA-Z0-9]{2,}", nl_query.lower()) if t not in {"najdi", "find", "assets"}]
+        if terms:
+            filtered = []
+            for obj in objects:
+                text = f"{obj.get('label','')} {obj.get('objectKey','')} {json.dumps(obj.get('attributes', {}), ensure_ascii=False)}".lower()
+                score = sum(1 for t in terms if t in text)
+                if score > 0:
+                    filtered.append((score, obj))
+            filtered.sort(key=lambda x: x[0], reverse=True)
+            objects = [o for _, o in filtered][:max_results]
+        else:
+            objects = objects[:max_results]
     total = data.get("total")
     if not isinstance(total, int):
         total = len(objects)
-    return AssetsQueryResponse(aql=aql, total=total, objects=objects)
+    return AssetsQueryResponse(aql=used_aql, total=total if used_aql != "objectId > 0" else len(objects), objects=objects)
 
 
 def _extract_issue_key(text: str) -> str | None:
