@@ -133,6 +133,12 @@
       if (data.action) lines.push(`Action: ${data.action}`);
       if (data.data?.jql) lines.push(`JQL: ${data.data.jql}`);
       if (typeof data.data?.total === "number") lines.push(`Total: ${data.data.total}`);
+      if (Array.isArray(data.data?.users) && data.data.users.length) {
+        lines.push("\nUsers:");
+        for (const u of data.data.users.slice(0, 20)) {
+          lines.push(`- ${u.display_name || "(no name)"}${u.email ? ` <${u.email}>` : ""}`);
+        }
+      }
       if (data.data?.summary) lines.push(`\n${data.data.summary}`);
       if (data.data?.key) lines.push(`Ticket: ${data.data.key}`);
       if (Array.isArray(data.data?.issues) && data.data.issues.length) {

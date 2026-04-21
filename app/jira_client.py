@@ -119,6 +119,16 @@ class JiraClient:
             json={"accountId": account_id},
         )
 
+    def list_assignable_users(self, *, project_key: str, max_results: int = 50) -> list[dict[str, Any]]:
+        data = self._request(
+            "GET",
+            "/rest/api/3/user/assignable/search",
+            params={"project": project_key, "query": "", "maxResults": max_results},
+        )
+        if isinstance(data, list):
+            return data
+        return []
+
     def assets_query(self, *, workspace_id: str, aql: str, max_results: int = 50) -> dict[str, Any]:
         payload = {
             "qlQuery": aql,

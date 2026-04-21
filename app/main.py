@@ -440,8 +440,15 @@ def chat(payload: ChatRequest) -> ChatResponse:
         search_hint = bool(re.search(r"\b(najdi|hladaj|search|find|list|vypis)\b", lower_message))
         summarize_hint = bool(re.search(r"\b(summary|summar|zhrn|sumariz|sprav summary)\b", lower_message))
         help_hint = bool(re.search(r"\b(help|pomoc|co vies|co dokazes|what can you do|capabilities)\b", lower_message))
-        assign_hint = bool(re.search(r"\b(assign|prirad|assigni|assigned|asignuj|daj)\b", lower_message)) and (
+        assign_hint = bool(re.search(r"\b(assign|prirad|assigni|assigned|asignuj)\b", lower_message)) and (
             "ticket" in lower_message or "tiket" in lower_message
+        )
+        list_users_hint = bool(re.search(r"\b(zoznam|vypis|list)\b", lower_message)) and bool(
+            re.search(r"\b(user|userov|users|pouzivatel|pouzivatelov)\b", lower_message)
+        )
+        list_tickets_hint = bool(
+            re.search(r"\b(zoznam|vypis|list|ake mame|aké máme)\b", lower_message)
+            and re.search(r"\b(ticket|tiket|tickety|tiketov|issues)\b", lower_message)
         )
         assets_hint = "assets" in lower_message or "insight" in lower_message or "ci " in lower_message or "ci/" in lower_message
         create_count_match = re.search(r"\b(\d{1,2})\b", lower_message)
@@ -454,7 +461,11 @@ def chat(payload: ChatRequest) -> ChatResponse:
             default_issue_type=settings.jira_default_issue_type,
         )
         action = str(parsed.get("action", "")).lower().strip()
-        if create_hint and not search_hint and not summarize_hint:
+        if list_users_hint:
+            action = "list_users"
+        elif list_tickets_hint:
+            action = "list_tickets"
+        elif create_hint and not search_hint and not summarize_hint:
             action = "create"
         elif assign_hint:
             action = "assign"
@@ -521,6 +532,51 @@ def chat(payload: ChatRequest) -> ChatResponse:
                 data=assigned.model_dump(),
             )
 
+        if action == "list_users":
+            users = jira.list_assignable_users(project_key=settings.jira_project_key, max_results=min(payload.max_results, 100))
+            mapped = [
+                {
+                    "display_name": u.get("displayName"),
+                    "email": u.get("emailAddress"),
+                    "account_id": u.get("accountId"),
+                    "active": u.get("active"),
+                }
+                for u in users
+            ]
+            return ChatResponse(
+                action="list_users",
+                message=f"Found {len(mapped)} user(s)",
+                data={"users": mapped},
+            )
+
+        if action == "list_tickets":
+            result = jira.search_with_fields(
+                jql=f"project = {settings.jira_project_key} ORDER BY updated DESC",
+                fields=["summary", "status", "priority", "assignee", "created", "updated", "issuetype"],
+                max_results=payload.max_results,
+            )
+            issues = []
+            for issue in result.get("issues", []):
+                fields = issue.get("fields", {})
+                assignee = fields.get("assignee") or {}
+                issues.append(
+                    {
+                        "key": issue.get("key"),
+                        "summary": fields.get("summary"),
+                        "status": (fields.get("status") or {}).get("name"),
+                        "priority": (fields.get("priority") or {}).get("name"),
+                        "assignee": assignee.get("displayName"),
+                        "updated": fields.get("updated"),
+                        "created": fields.get("created"),
+                        "issue_type": (fields.get("issuetype") or {}).get("name"),
+                    }
+                )
+            return ChatResponse(
+                action="list_tickets",
+                message=f"Found {len(issues)} ticket(s)",
+                data={"jql": f"project = {settings.jira_project_key} ORDER BY updated DESC", "total": len(issues), "issues": issues},
+            )
+
         if action == "help":
             help_text = (
                 "Viem pracovat s Jira ticketmi cez chat:\n"
@@ -529,10 +585,12 @@ def chat(payload: ChatRequest) -> ChatResponse:
                 "3) Najst tickety textom: \"najdi otvorene tickety o ...\"\n"
                 "4) Spravit summary: \"sprav summary pre KAN-1\"\n"
                 "5) Priradit ticket: \"prirad KAN-12 na imrich\"\n"
-                "6) Assets lookup: owner, HW inventory, job/file, SLA, DORA relevance\n"
-                "7) Offboarding checklist podla pristupov v Jira\n"
-                "8) Assets print protocol (odovzdavaci protokol)\n"
-                "9) Vratim aj pouzite JQL/AQL pri vyhladavani.\n"
+                "6) Zoznam ticketov: \"daj mi zoznam tiketov\"\n"
+                "7) Zoznam userov: \"daj mi zoznam userov\"\n"
+                "8) Assets lookup: owner, HW inventory, job/file, SLA, DORA relevance\n"
+                "9) Offboarding checklist podla pristupov v Jira\n"
+                "10) Assets print protocol (odovzdavaci protokol)\n"
+                "11) Vratim aj pouzite JQL/AQL pri vyhladavani.\n"
                 "Tip: pis prirodzene, ja rozhodnem ci mam create/search/summarize."
             )
             return ChatResponse(action="help", message=help_text, data=None)
