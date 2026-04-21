@@ -10,6 +10,7 @@ modules:
       resolver:
         function: resolver
       title: Jira AI Chat
+      viewportSize: medium
       icon: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
   function:
     - key: resolver
