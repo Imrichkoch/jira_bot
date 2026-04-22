@@ -216,6 +216,63 @@ def _is_hw_like(obj: dict[str, Any]) -> bool:
     return any(w in text for w in hw_words)
 
 
+def _extract_person_query_fallback(text: str) -> str | None:
+    normalized = text.strip()
+    if not normalized:
+        return None
+    # Example: "aky laptop ma imrich koch"
+    match = re.search(r"\b(?:ma|má|has)\s+([a-zA-Z0-9._%+\-@ ]{2,120})$", normalized, flags=re.IGNORECASE)
+    if match:
+        candidate = match.group(1).strip(" .,:;!?()[]{}\"'")
+        return candidate if len(candidate) >= 2 else None
+    return None
+
+
+def _hydrate_assets_objects(workspace_id: str, objects: list[dict[str, Any]], limit: int = 120) -> list[dict[str, Any]]:
+    detailed_objects: list[dict[str, Any]] = []
+    for base_obj in objects[:limit]:
+        object_id_or_key = str(base_obj.get("objectKey") or base_obj.get("id") or "").strip()
+        if not object_id_or_key:
+            continue
+        try:
+            raw_detail = jira.get_asset_object(workspace_id=workspace_id, object_id_or_key=object_id_or_key)
+            detailed_objects.append(flatten_assets_object(raw_detail))
+        except Exception:
+            detailed_objects.append(base_obj)
+    return detailed_objects
+
+
+def _assets_for_user(nl_query: str, max_results: int, only_hw: bool) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    person_query = _extract_person_query(nl_query) or _extract_person_query_fallback(nl_query) or nl_query.strip()
+    if not person_query:
+        return None, []
+    matched_user = _resolve_user_for_assets(person_query)
+    if not matched_user:
+        return None, []
+
+    workspace_id = _require_assets_workspace()
+    data = jira.assets_query(workspace_id=workspace_id, aql="objectId > 0", max_results=max(300, max_results * 50))
+    objects_raw = data.get("objectEntries") or data.get("results", {}).get("objectEntries") or data.get("values") or []
+    objects = [flatten_assets_object(o) for o in objects_raw]
+    objects = _hydrate_assets_objects(workspace_id=workspace_id, objects=objects, limit=120)
+
+    display_name = str(matched_user.get("displayName") or "")
+    email = str(matched_user.get("emailAddress") or "")
+    account_id = str(matched_user.get("accountId") or "")
+    user_tokens = [t for t in [display_name, email, account_id, person_query] if t]
+
+    matched: list[dict[str, Any]] = []
+    for candidate in objects:
+        text = _assets_text(candidate)
+        if any(_normalize_lookup_text(token) in text for token in user_tokens):
+            matched.append(candidate)
+
+    if only_hw:
+        matched = [a for a in matched if _is_hw_like(a)]
+
+    return matched_user, matched[:max_results]
+
+
 def _extract_issue_key_from_history(history: list[dict[str, str]] | None) -> str | None:
     if not history:
         return None
@@ -737,6 +794,9 @@ def chat(payload: ChatRequest) -> ChatResponse:
             re.search(r"\b(zoznam|vypis|list|ake mame|aké máme)\b", lower_message)
             and re.search(r"\b(ticket|tiket|tickety|tiketov|issues)\b", lower_message)
         )
+        hw_person_hint = bool(re.search(r"\b(laptop|notebook|pc|computer|hardware|zariadenie|zariadenia)\b", lower_message)) and bool(
+            re.search(r"\b(ma|má|has)\b", lower_message)
+        )
         assets_hint = "assets" in lower_message or "insight" in lower_message or "ci " in lower_message or "ci/" in lower_message
         create_count_match = re.search(r"\b(\d{1,2})\b", lower_message)
         create_count = int(create_count_match.group(1)) if create_count_match and create_hint and not search_hint else 1
@@ -762,6 +822,8 @@ def chat(payload: ChatRequest) -> ChatResponse:
             action = "assign"
         elif help_hint:
             action = "help"
+        elif hw_person_hint:
+            action = "assets_hw"
         elif assets_hint and action in {"search", ""}:
             action = "assets_search"
 
@@ -951,6 +1013,26 @@ def chat(payload: ChatRequest) -> ChatResponse:
                     action=action,
                     message="Assets funkcie su docasne nedostupne, lebo nie je nastavene ASSETS_WORKSPACE_ID alebo chybaju prava.",
                     data=None,
+                )
+            query_text = parsed.get("query") or payload.message
+            if action == "assets_hw":
+                user, user_assets = _assets_for_user(query_text, payload.max_results, only_hw=True)
+                if user and user_assets:
+                    return ChatResponse(
+                        action=action,
+                        message=f"Nasiel som {len(user_assets)} HW assetov pre {user.get('displayName')}.",
+                        data={"total": len(user_assets), "objects": user_assets},
+                    )
+                if user and not user_assets:
+                    return ChatResponse(
+                        action=action,
+                        message=f"Pre {user.get('displayName')} som nenasiel ziadny priradeny HW asset.",
+                        data={"total": 0, "objects": []},
+                    )
+                return ChatResponse(
+                    action=action,
+                    message="Pouzivatela sa nepodarilo jednoznacne najst. Skus meno alebo email presnejsie.",
+                    data={"total": 0, "objects": []},
                 )
             assets_result = _assets_search_from_nl(parsed.get("query") or payload.message, payload.max_results)
             return ChatResponse(
