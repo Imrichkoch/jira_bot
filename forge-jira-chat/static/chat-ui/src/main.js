@@ -31,6 +31,53 @@ function normalizeResponse(data) {
   if (data.action === "assets_print" && data.data?.protocol) {
     return data.data.protocol;
   }
+
+  if (String(data.action || "").startsWith("assets_")) {
+    const lines = [];
+    lines.push(data.message || "Assets response.");
+    if (data.data?.aql) lines.push(`AQL: ${data.data.aql}`);
+    if (typeof data.data?.total === "number") lines.push(`Total: ${data.data.total}`);
+    if (Array.isArray(data.data?.objects) && data.data.objects.length) {
+      lines.push("\nAssets:");
+      for (const obj of data.data.objects.slice(0, 12)) {
+        const key = obj.objectKey || obj.id || "?";
+        const label = obj.label || "(no label)";
+        const type = obj.objectType || "Object";
+        lines.push(`- ${key}: ${label} (${type})`);
+        const attrs = obj.attributes || {};
+        const preferred = [
+          "Assigned user",
+          "Owner",
+          "Name",
+          "Serial Number",
+          "Hostname",
+          "Department",
+          "Email",
+          "SLA Tier",
+          "Business Impact"
+        ];
+        const picked = [];
+        for (const name of preferred) {
+          if (attrs[name] !== undefined && attrs[name] !== null && String(attrs[name]).trim()) {
+            picked.push([name, attrs[name]]);
+          }
+        }
+        if (!picked.length) {
+          const fallback = Object.entries(attrs).slice(0, 4);
+          for (const [k, v] of fallback) {
+            picked.push([k, v]);
+          }
+        }
+        for (const [k, v] of picked.slice(0, 4)) {
+          lines.push(`  - ${k}: ${v}`);
+        }
+      }
+    } else {
+      lines.push("Nenasiel som ziadne konkretne assety pre tento dotaz.");
+    }
+    return lines.join("\n");
+  }
+
   const lines = [];
   lines.push(data.message || "Done.");
   if (data.data?.summary) lines.push(`\n${data.data.summary}`);
