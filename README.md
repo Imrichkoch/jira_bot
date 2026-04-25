@@ -212,6 +212,13 @@ V chat rozhrani je offboarding/protokol dvojkrokovy:
 - po vybere cislom, Assets klucom alebo textom vygeneruje dokument z aktivnej sablony
 - po vygenerovani dokumentu sa pokusi vycistit volitelny editable assignment atribut v Assets, napr. `Assigned user`
 
+Onboarding / odovzdavaci protokol funguje podobne:
+- bot najprv ponukne volne HW zariadenia z Assets
+- ak ziadne volne zariadenie nenajde, ukaze aj aktualne priradene zariadenia s upozornenim, ze vyber prepise priradenie
+- pouzivatel vyberie zariadenie a doplni meno/email cloveka, ktory ho dostane
+- bot vygeneruje dokument z aktivnej onboarding sablony
+- po vygenerovani dokumentu sa pokusi zapisat pouzivatela do editable assignment atributu v Assets, napr. `Assigned user`
+
 ### Print protocol in Jira Assets (odovzdavaci protokol)
 
 `POST /assets/print-protocol`
@@ -237,7 +244,7 @@ Admin vie:
 - pri OpenRouter/custom `OPENAI_BASE_URL` backend pouziva OpenAI-compatible Chat Completions API
 - menit system prompt
 - menit `skills.md`, ktory sa priklada k AI instrukciam
-- pridavat offboarding sablony vo formate DOCX/PDF
+- pridavat onboarding/offboarding sablony vo formate DOCX/PDF
 - nastavit DOCX placeholdery a PDF pozicie pre meno, PC, seriove cislo a doplnujuci text
 
 Prvy admin sa da bootstrapnut cez env premenne:

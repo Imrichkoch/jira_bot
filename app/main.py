@@ -57,7 +57,8 @@ runtime_settings = RuntimeSettingsStore(
 )
 admin_store = AdminStore(DATA_DIR / "admin.sqlite3")
 admin_store.bootstrap_admin(settings.admin_bootstrap_username, settings.admin_bootstrap_password)
-template_store = OffboardingTemplateStore(DATA_DIR)
+template_store = OffboardingTemplateStore(DATA_DIR, root_name="offboarding_templates")
+onboarding_template_store = OffboardingTemplateStore(DATA_DIR, root_name="onboarding_templates")
 jira = JiraClient(settings)
 ai = AIClient(settings, runtime_context=runtime_settings.ai_context)
 STATIC_DIR = BASE_DIR / "static"
@@ -352,6 +353,67 @@ def admin_delete_offboarding_template(
     try:
         template_store.delete(template_id)
         return {"templates": template_store.list_templates()}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/admin/api/onboarding-templates")
+def admin_list_onboarding_templates(admin: dict[str, Any] = Depends(_require_admin)) -> dict[str, Any]:
+    return {"templates": onboarding_template_store.list_templates()}
+
+
+@app.post("/admin/api/onboarding-templates")
+def admin_add_onboarding_template(
+    payload: OffboardingTemplateRequest,
+    admin: dict[str, Any] = Depends(_require_admin),
+) -> dict[str, Any]:
+    try:
+        template = onboarding_template_store.add_template(
+            name=payload.name,
+            file_name=payload.file_name,
+            content_base64=payload.content_base64,
+            template_format=payload.template_format,
+            fields=payload.fields,
+            active=payload.active,
+        )
+        return {"template": template, "templates": onboarding_template_store.list_templates()}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/admin/api/onboarding-templates/{template_id}/active")
+def admin_activate_onboarding_template(
+    template_id: str,
+    admin: dict[str, Any] = Depends(_require_admin),
+) -> dict[str, Any]:
+    try:
+        template = onboarding_template_store.set_active(template_id)
+        return {"template": template, "templates": onboarding_template_store.list_templates()}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.put("/admin/api/onboarding-templates/{template_id}/fields")
+def admin_update_onboarding_template_fields(
+    template_id: str,
+    fields: dict[str, Any],
+    admin: dict[str, Any] = Depends(_require_admin),
+) -> dict[str, Any]:
+    try:
+        template = onboarding_template_store.update_fields(template_id, fields)
+        return {"template": template, "templates": onboarding_template_store.list_templates()}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.delete("/admin/api/onboarding-templates/{template_id}")
+def admin_delete_onboarding_template(
+    template_id: str,
+    admin: dict[str, Any] = Depends(_require_admin),
+) -> dict[str, Any]:
+    try:
+        onboarding_template_store.delete(template_id)
+        return {"templates": onboarding_template_store.list_templates()}
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -742,6 +804,50 @@ def _generate_offboarding_document(
     }
 
 
+def _generate_onboarding_document(
+    *,
+    user_identifier: str,
+    selected_assets: list[dict[str, Any]],
+    extra_text: str | None = None,
+    template_id: str | None = None,
+) -> dict[str, Any]:
+    context = _build_offboarding_document_context(user_identifier, extra_text, selected_assets=selected_assets)
+    template = onboarding_template_store.get(template_id) if template_id else onboarding_template_store.active()
+    if template_id and not template:
+        raise HTTPException(status_code=404, detail="Onboarding template not found.")
+    safe_user = re.sub(r"[^a-zA-Z0-9_-]+", "-", context["values"]["employee_name"]).strip("-") or "user"
+    file_stem = f"onboarding-{safe_user}-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+    template_error = None
+    try:
+        result = render_offboarding_document(
+            template_store=onboarding_template_store,
+            template=template,
+            output_dir=STATIC_DIR / "onboarding",
+            values=context["values"],
+            file_stem=file_stem,
+        )
+    except Exception as exc:
+        if not template:
+            raise
+        template_error = str(exc)
+        result = render_offboarding_document(
+            template_store=onboarding_template_store,
+            template=None,
+            output_dir=STATIC_DIR / "onboarding",
+            values=context["values"],
+            file_stem=f"{file_stem}-fallback",
+        )
+    document_url = f"/static/onboarding/{result['file_name']}"
+    return {
+        "document_url": document_url,
+        "file_name": result["file_name"],
+        "format": result["format"],
+        "template": {"id": template.get("id"), "name": template.get("name")} if template else None,
+        "template_error": template_error,
+        **context,
+    }
+
+
 def _asset_identity(asset: dict[str, Any]) -> str:
     return str(asset.get("objectKey") or asset.get("id") or asset.get("label") or "").strip()
 
@@ -800,7 +906,13 @@ def _format_asset_choices(assets: list[dict[str, Any]]) -> str:
                 "Seriove c.",
             ],
         )
-        suffix = f", SN: {serial}" if serial else ""
+        suffixes = []
+        if serial:
+            suffixes.append(f"SN: {serial}")
+        assigned = _asset_assigned_value(asset)
+        if assigned:
+            suffixes.append(f"priradene: {assigned}")
+        suffix = f" ({', '.join(suffixes)})" if suffixes else ""
         lines.append(f"{index}) {_format_device_name(asset)}{suffix}")
     return "\n".join(lines)
 
@@ -820,6 +932,102 @@ def _offboarding_selection_prompt(user: dict[str, Any], assets: list[dict[str, A
                 "type": "offboarding_select_asset",
                 "user_identifier": display_name,
                 "extra_text": "",
+                "assets": assets,
+            },
+            "total": len(assets),
+            "objects": assets,
+        },
+    )
+
+
+def _asset_assigned_value(asset: dict[str, Any]) -> str:
+    return _asset_attr_value(
+        asset,
+        [
+            "Assigned user",
+            "Assigned to",
+            "Assignee",
+            "Owner",
+            "User",
+            "Pouzivatel",
+            "Používateľ",
+            "Drzitel",
+            "Držiteľ",
+        ],
+    ).strip()
+
+
+def _assets_available_for_onboarding(max_results: int = 25) -> list[dict[str, Any]]:
+    objects = _assets_hw_inventory_for_onboarding(max_results=max_results)
+    available = [obj for obj in objects if not _asset_assigned_value(obj)]
+    return available[:max_results]
+
+
+def _assets_hw_inventory_for_onboarding(max_results: int = 25) -> list[dict[str, Any]]:
+    workspace_id = _require_assets_workspace()
+    data = jira.assets_query(workspace_id=workspace_id, aql="objectId > 0", max_results=max(300, max_results * 50))
+    objects_raw = data.get("objectEntries") or data.get("results", {}).get("objectEntries") or data.get("values") or []
+    objects = [flatten_assets_object(o) for o in objects_raw]
+    objects = _hydrate_assets_objects(workspace_id=workspace_id, objects=objects, limit=160)
+    return [obj for obj in objects if _is_hw_like(obj)][:max_results]
+
+
+def _extract_onboarding_recipient(text: str, parsed: dict[str, Any] | None = None) -> str | None:
+    email = re.search(r"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", text)
+    if email:
+        return email.group(1)
+    for pattern in [
+        r"\b(?:pre|for|na|dostane|pridel(?:it|iť)?|prirad(?:it|iť)?|zamestnancovi|pouzivatelovi|používateľovi)\b[:\s-]+(.+)$",
+        r"\b(?:meno|recipient|user|pouzivatel|používateľ)\b[:\s-]+(.+)$",
+    ]:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            candidate = match.group(1).strip(" .,:;!?()[]{}\"'")
+            candidate = re.sub(
+                r"\b(?:notebook|laptop|pc|pocitac|počítač|zariadenie|odovzdavaci|odovzdávací|protokol|onboarding|vyrob|vytvor|sprav|urob|mi)\b",
+                " ",
+                candidate,
+                flags=re.IGNORECASE,
+            )
+            candidate = re.sub(r"\s+", " ", candidate).strip(" .,:;!?()[]{}\"'")
+            if len(candidate) >= 2:
+                return candidate
+    parsed_query = (parsed or {}).get("query")
+    if isinstance(parsed_query, str) and parsed_query.strip():
+        return None
+    return None
+
+
+def _onboarding_selection_prompt(
+    assets: list[dict[str, Any]],
+    recipient: str | None,
+    extra_text: str = "",
+    *,
+    only_available: bool = True,
+) -> ChatResponse:
+    who = f" pre {recipient}" if recipient else ""
+    availability_text = "volne zariadenia" if only_available else "zariadenia"
+    message = (
+        f"Nasiel som tieto {availability_text}{who}. Ktore sa odovzdava?\n"
+        f"{_format_asset_choices(assets)}\n\n"
+        "Odpovedz cislom, Assets klucom alebo nazvom zariadenia."
+    )
+    if not only_available:
+        message = (
+            "Nenasiel som ziadne uplne volne HW zariadenie, preto ukazujem aj aktualne priradene kusy. "
+            "Vyber prepise priradenie v Assets.\n\n"
+            + message
+        )
+    if not recipient:
+        message += " Potom mi napis aj meno cloveka, ktory ho dostane."
+    return ChatResponse(
+        action="onboarding_select_asset",
+        message=message,
+        data={
+            "pending_action": {
+                "type": "onboarding_select_asset",
+                "recipient": recipient or "",
+                "extra_text": extra_text,
                 "assets": assets,
             },
             "total": len(assets),
@@ -900,6 +1108,48 @@ def _unassign_asset_from_user(asset: dict[str, Any], user_hint: str | None = Non
     }
 
 
+def _assign_asset_to_user(asset: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
+    workspace_id = _require_assets_workspace()
+    object_id_or_key = _asset_identity(asset)
+    if not object_id_or_key:
+        raise RuntimeError("Assets object has no key/id.")
+    raw_asset = jira.get_asset_object(workspace_id=workspace_id, object_id_or_key=object_id_or_key)
+    object_type_id = str((raw_asset.get("objectType") or {}).get("id") or "")
+    if not object_type_id:
+        raise RuntimeError(f"Assets object {object_id_or_key} has no objectTypeId.")
+    assignment_attr = _find_assignment_attribute(raw_asset)
+    if not assignment_attr:
+        raise RuntimeError(f"No editable optional assignment attribute found on {object_id_or_key}.")
+    attr_id = str(
+        assignment_attr.get("objectTypeAttributeId")
+        or (assignment_attr.get("objectTypeAttribute") or {}).get("id")
+        or ""
+    )
+    if not attr_id:
+        raise RuntimeError(f"Assignment attribute on {object_id_or_key} has no id.")
+    value = str(user.get("displayName") or user.get("emailAddress") or user.get("accountId") or "").strip()
+    if not value:
+        raise RuntimeError("Recipient user has no usable display value.")
+    updated = jira.update_asset_object(
+        workspace_id=workspace_id,
+        object_id_or_key=str(raw_asset.get("id") or object_id_or_key),
+        object_type_id=object_type_id,
+        attributes=[
+            {
+                "objectTypeAttributeId": attr_id,
+                "objectAttributeValues": [{"value": value}],
+            }
+        ],
+    )
+    return {
+        "object_key": raw_asset.get("objectKey") or object_id_or_key,
+        "label": raw_asset.get("label"),
+        "assigned_attribute": ((assignment_attr.get("objectTypeAttribute") or {}).get("name") or attr_id),
+        "assigned_value": value,
+        "updated": flatten_assets_object(updated),
+    }
+
+
 def _complete_offboarding_asset_selection(pending: dict[str, Any], message: str) -> ChatResponse:
     assets = pending.get("assets") if isinstance(pending.get("assets"), list) else []
     selected_assets = _select_assets_from_message(message, assets)
@@ -939,6 +1189,76 @@ def _complete_offboarding_asset_selection(pending: dict[str, Any], message: str)
     return ChatResponse(
         action="offboarding",
         message=f"Offboarding dokument je pripraveny pre {generated['user']['display_name']}.{suffix}",
+        data=generated,
+    )
+
+
+def _complete_onboarding_asset_selection(pending: dict[str, Any], message: str) -> ChatResponse:
+    assets = pending.get("assets") if isinstance(pending.get("assets"), list) else []
+    selected_assets = pending.get("selected_assets") if isinstance(pending.get("selected_assets"), list) else []
+    if not selected_assets:
+        selected_assets = _select_assets_from_message(message, assets)
+    recipient = str(pending.get("recipient") or "").strip() or _extract_onboarding_recipient(message)
+    extra_text = str(pending.get("extra_text") or "").strip() or _extract_extra_text(message)
+
+    if not selected_assets:
+        return ChatResponse(
+            action="onboarding_select_asset",
+            message=(
+                "Neviem jednoznacne vybrat zariadenie. "
+                "Napis prosim cislo zo zoznamu alebo Assets kluc ako CDX-4.\n"
+                f"{_format_asset_choices(assets)}"
+            ),
+            data={"pending_action": pending, "total": len(assets), "objects": assets},
+        )
+    if not recipient:
+        next_pending = dict(pending)
+        next_pending["type"] = "onboarding_select_recipient"
+        next_pending["selected_assets"] = selected_assets
+        return ChatResponse(
+            action="onboarding_select_recipient",
+            message="Komu sa ma zariadenie odovzdat? Napis meno alebo email pouzivatela.",
+            data={"pending_action": next_pending, "selected_assets": selected_assets},
+        )
+
+    user = _resolve_user_for_assets(recipient)
+    if not user:
+        return ChatResponse(
+            action="onboarding_select_recipient",
+            message=f"Pouzivatela '{recipient}' som nenasiel. Napis prosim presnejsie meno alebo email.",
+            data={
+                "pending_action": {
+                    "type": "onboarding_select_recipient",
+                    "selected_assets": selected_assets,
+                    "extra_text": extra_text,
+                },
+                "selected_assets": selected_assets,
+            },
+        )
+
+    generated = _generate_onboarding_document(
+        user_identifier=user.get("displayName") or recipient,
+        selected_assets=selected_assets,
+        extra_text=extra_text,
+    )
+    assign_results = []
+    assign_errors = []
+    for asset in selected_assets:
+        try:
+            assign_results.append(_assign_asset_to_user(asset, user))
+        except Exception as exc:  # noqa: BLE001
+            assign_errors.append({"asset": _format_device_name(asset), "error": str(exc)})
+    generated["selected_assets"] = selected_assets
+    generated["assigned_assets"] = assign_results
+    generated["assign_errors"] = assign_errors
+    suffix = ""
+    if assign_results:
+        suffix += f" Priradil som {len(assign_results)} zariadeni v Assets."
+    if assign_errors:
+        suffix += f" Pozor: {len(assign_errors)} zariadeni sa nepodarilo priradit."
+    return ChatResponse(
+        action="onboarding",
+        message=f"Onboarding dokument je pripraveny pre {generated['user']['display_name']}.{suffix}",
         data=generated,
     )
 
@@ -1468,9 +1788,13 @@ def chat(payload: ChatRequest) -> ChatResponse:
                 lower_message,
             )
             or (
-                re.search(r"\b(odovzdavaci|odovzdávací|preberaci|preberací|vratenie|vrátenie)\b", lower_message)
+                re.search(r"\b(preberaci|preberací|vratenie|vrátenie)\b", lower_message)
                 and re.search(r"\b(protokol|zariaden|pc|laptop|notebook|hardware)\b", lower_message)
             )
+        )
+        onboarding_doc_hint = bool(
+            re.search(r"\b(onboarding|nastup|novy\s+zamestnanec|novému|novemu|dostane|odovzdavaci|odovzdávací)\b", lower_message)
+            and re.search(r"\b(protokol|zariaden|pc|pocitac|počítač|laptop|notebook|hardware)\b", lower_message)
         )
         help_hint = bool(re.search(r"\b(help|pomoc|co vies|co dokazes|what can you do|capabilities)\b", lower_message))
         greeting_hint = bool(re.search(r"\b(ahoj|cau|čau|halo|hello|hi|hey)\b", lower_message.strip()))
@@ -1506,6 +1830,8 @@ def chat(payload: ChatRequest) -> ChatResponse:
             action = "list_users"
         elif list_tickets_hint:
             action = "list_tickets"
+        elif onboarding_doc_hint:
+            action = "onboarding"
         elif offboarding_doc_hint:
             action = "offboarding"
         elif greeting_hint or thanks_hint:
@@ -1526,6 +1852,8 @@ def chat(payload: ChatRequest) -> ChatResponse:
         pending = payload.pending_action or {}
         if pending.get("type") == "offboarding_select_asset":
             return _complete_offboarding_asset_selection(pending, payload.message)
+        if pending.get("type") in {"onboarding_select_asset", "onboarding_select_recipient"}:
+            return _complete_onboarding_asset_selection(pending, payload.message)
 
         if pending.get("type") == "assign_all_unassigned" and yes_all_hint:
             assignee_query = str(pending.get("assignee_query") or "").strip()
@@ -1778,6 +2106,37 @@ def chat(payload: ChatRequest) -> ChatResponse:
                 action="offboarding",
                 message=f"Offboarding dokument je pripraveny pre {generated['user']['display_name']}.",
                 data=generated,
+            )
+
+        if action == "onboarding":
+            if not _assets_enabled():
+                return ChatResponse(
+                    action="onboarding",
+                    message="Onboarding protokol je docasne nedostupny, lebo nie je nastavene ASSETS_WORKSPACE_ID alebo chybaju prava.",
+                    data=None,
+                )
+            available_assets = _assets_available_for_onboarding(max_results=25)
+            if not available_assets:
+                all_hw_assets = _assets_hw_inventory_for_onboarding(max_results=25)
+                if not all_hw_assets:
+                    return ChatResponse(
+                        action="onboarding",
+                        message="Nenasiel som ziadne HW zariadenie v Assets.",
+                        data={"total": 0, "objects": []},
+                    )
+                recipient = _extract_onboarding_recipient(payload.message, parsed)
+                return _onboarding_selection_prompt(
+                    all_hw_assets,
+                    recipient=recipient,
+                    extra_text=_extract_extra_text(payload.message),
+                    only_available=False,
+                )
+            recipient = _extract_onboarding_recipient(payload.message, parsed)
+            return _onboarding_selection_prompt(
+                available_assets,
+                recipient=recipient,
+                extra_text=_extract_extra_text(payload.message),
+                only_available=True,
             )
 
         if action == "assets_print":

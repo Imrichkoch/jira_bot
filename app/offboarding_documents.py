@@ -76,8 +76,8 @@ def _merge_fields(fields: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
 
 
 class OffboardingTemplateStore:
-    def __init__(self, data_dir: Path) -> None:
-        self._root = data_dir / "offboarding_templates"
+    def __init__(self, data_dir: Path, root_name: str = "offboarding_templates") -> None:
+        self._root = data_dir / root_name
         self._files_dir = self._root / "files"
         self._meta_path = self._root / "templates.json"
         self._files_dir.mkdir(parents=True, exist_ok=True)

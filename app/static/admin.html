@@ -304,13 +304,20 @@
       </section>
 
       <section class="panel">
-        <h2>Offboarding sablony</h2>
+        <h2>Dokumentove sablony</h2>
         <div class="muted">
           DOCX sablona pouziva placeholdery typu <code>{{employee_name}}</code>.
           PDF sablona pouziva pozicie v percentach od laveho horneho rohu.
         </div>
 
         <div class="row" style="margin-top: 14px;">
+          <div>
+            <label for="templateMode">Typ sablony</label>
+            <select id="templateMode">
+              <option value="offboarding">Offboarding / vratenie zariadenia</option>
+              <option value="onboarding">Onboarding / odovzdanie zariadenia</option>
+            </select>
+          </div>
           <div>
             <label for="templateName">Nazov sablony</label>
             <input id="templateName" placeholder="Odovzdanie notebooku" />
@@ -403,6 +410,7 @@
     const tokenKey = "jiraBotAdminToken";
     const $ = (id) => document.getElementById(id);
     const templateFields = ["employee_name", "device_name", "serial_number", "extra_text"];
+    let templateMode = "offboarding";
     let pdfPlacing = false;
     let activeTemplateId = null;
     let selectedPdfFile = null;
@@ -583,7 +591,7 @@
     }
 
     async function loadTemplates() {
-      const data = await api("/admin/api/offboarding-templates");
+      const data = await api(`/admin/api/${templateMode}-templates`);
       $("templatesList").innerHTML = "";
       let activeTemplate = null;
       for (const template of data.templates || []) {
@@ -606,7 +614,7 @@
         activate.textContent = "Nastavit ako aktivnu";
         activate.disabled = Boolean(template.active);
         activate.addEventListener("click", async () => {
-          await api(`/admin/api/offboarding-templates/${template.id}/active`, { method: "PUT" });
+          await api(`/admin/api/${templateMode}-templates/${template.id}/active`, { method: "PUT" });
           await loadTemplates();
         });
         const loadFields = document.createElement("button");
@@ -623,7 +631,7 @@
         saveFields.className = "secondary";
         saveFields.textContent = "Ulozit pozicie";
         saveFields.addEventListener("click", async () => {
-          await api(`/admin/api/offboarding-templates/${template.id}/fields`, {
+          await api(`/admin/api/${templateMode}-templates/${template.id}/fields`, {
             method: "PUT",
             body: JSON.stringify(collectTemplateFields()),
           });
@@ -637,7 +645,7 @@
         remove.textContent = "Zmazat";
         remove.addEventListener("click", async () => {
           if (!confirm(`Zmazat sablonu ${template.name}?`)) return;
-          await api(`/admin/api/offboarding-templates/${template.id}`, { method: "DELETE" });
+          await api(`/admin/api/${templateMode}-templates/${template.id}`, { method: "DELETE" });
           await loadTemplates();
         });
         actions.appendChild(activate);
@@ -669,6 +677,13 @@
     $("logoutButton").addEventListener("click", () => {
       localStorage.removeItem(tokenKey);
       showLoggedIn(false);
+    });
+
+    $("templateMode").addEventListener("change", async () => {
+      templateMode = $("templateMode").value || "offboarding";
+      activeTemplateId = null;
+      setStatus("templateStatus", "");
+      await loadTemplates();
     });
 
     $("modelProvider").addEventListener("change", () => {
@@ -770,7 +785,7 @@
         if (!file) throw new Error("Vyber DOCX alebo PDF subor.");
         setStatus("templateStatus", "Nahravam sablonu...");
         const content = await fileToBase64(file);
-        await api("/admin/api/offboarding-templates", {
+        await api(`/admin/api/${templateMode}-templates`, {
           method: "POST",
           body: JSON.stringify({
             name: $("templateName").value || file.name,
