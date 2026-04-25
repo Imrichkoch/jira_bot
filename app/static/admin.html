@@ -171,8 +171,18 @@
     .pdf-click-layer {
       position: absolute;
       inset: 0;
-      cursor: crosshair;
       background: transparent;
+      cursor: default;
+      pointer-events: none;
+    }
+    .pdf-preview-wrap.placing {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .pdf-preview-wrap.placing .pdf-click-layer {
+      cursor: crosshair;
+      pointer-events: auto;
+      background: rgba(12, 102, 228, 0.08);
     }
     .templates {
       display: grid;
@@ -332,13 +342,21 @@
         </div>
 
         <div style="margin-top: 14px;">
-          <label for="pdfClickField">PDF click-to-place</label>
-          <select id="pdfClickField">
-            <option value="employee_name">Meno</option>
-            <option value="device_name">PC / zariadenie</option>
-            <option value="serial_number">Seriove cislo</option>
-            <option value="extra_text">Doplnujuci text</option>
-          </select>
+          <div class="row">
+            <div>
+              <label for="pdfClickField">PDF click-to-place</label>
+              <select id="pdfClickField">
+                <option value="employee_name">Meno</option>
+                <option value="device_name">PC / zariadenie</option>
+                <option value="serial_number">Seriove cislo</option>
+                <option value="extra_text">Doplnujuci text</option>
+              </select>
+            </div>
+            <button id="togglePdfPlaceButton" class="secondary" type="button">Zapnut oznacenie pozicie</button>
+          </div>
+          <div class="muted" style="margin-top: 8px;">
+            PDF normalne scrolluje. Ked chces ulozit poziciu pola, zapni oznacenie a klikni do dokumentu.
+          </div>
           <div id="pdfPreviewWrap" class="pdf-preview-wrap hidden">
             <embed id="pdfPreview" type="application/pdf" />
             <div id="pdfClickLayer" class="pdf-click-layer"></div>
@@ -355,6 +373,7 @@
     const tokenKey = "jiraBotAdminToken";
     const $ = (id) => document.getElementById(id);
     const templateFields = ["employee_name", "device_name", "serial_number", "extra_text"];
+    let pdfPlacing = false;
 
     function token() {
       return localStorage.getItem(tokenKey) || "";
@@ -378,6 +397,12 @@
       const el = $(id);
       el.textContent = text;
       el.classList.toggle("error", error);
+    }
+
+    function setPdfPlacing(active) {
+      pdfPlacing = active;
+      $("pdfPreviewWrap").classList.toggle("placing", active);
+      $("togglePdfPlaceButton").textContent = active ? "Vypnut oznacenie pozicie" : "Zapnut oznacenie pozicie";
     }
 
     async function loadAll() {
@@ -538,22 +563,41 @@
       if (ext === "pdf") {
         $("pdfPreview").src = URL.createObjectURL(file);
         $("pdfPreviewWrap").classList.remove("hidden");
+        setPdfPlacing(false);
       } else {
         $("pdfPreviewWrap").classList.add("hidden");
+        setPdfPlacing(false);
       }
     });
 
     $("templateFormat").addEventListener("change", () => {
       $("pdfPreviewWrap").classList.toggle("hidden", $("templateFormat").value !== "pdf");
+      setPdfPlacing(false);
+    });
+
+    $("togglePdfPlaceButton").addEventListener("click", () => {
+      if ($("pdfPreviewWrap").classList.contains("hidden")) {
+        setStatus("templateStatus", "Najprv vyber PDF subor.", true);
+        return;
+      }
+      setPdfPlacing(!pdfPlacing);
+      setStatus(
+        "templateStatus",
+        pdfPlacing ? "Klikni do PDF dokumentu na miesto, kam sa ma vlozit vybrane pole." : ""
+      );
     });
 
     $("pdfClickLayer").addEventListener("click", (event) => {
+      if (!pdfPlacing) return;
+      event.preventDefault();
+      event.stopPropagation();
       const rect = $("pdfClickLayer").getBoundingClientRect();
       const xPct = ((event.clientX - rect.left) / rect.width) * 100;
       const yPct = ((event.clientY - rect.top) / rect.height) * 100;
       const field = $("pdfClickField").value;
       $(`field_${field}_x`).value = xPct.toFixed(1);
       $(`field_${field}_y`).value = yPct.toFixed(1);
+      setPdfPlacing(false);
       setStatus("templateStatus", `Pozicia pre ${field}: X ${xPct.toFixed(1)} %, Y ${yPct.toFixed(1)} %`);
     });
 
@@ -577,6 +621,7 @@
         $("templateFile").value = "";
         $("templateName").value = "";
         $("pdfPreviewWrap").classList.add("hidden");
+        setPdfPlacing(false);
         setStatus("templateStatus", "Sablona je ulozena a nastavena ako aktivna.");
         await loadTemplates();
       } catch (err) {
