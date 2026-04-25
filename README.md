@@ -206,6 +206,12 @@ Priklad:
 
 Vrati URL na vygenerovany subor v `/static/offboarding/...`. Ak je v admin rozhrani aktivna DOCX/PDF sablona, pouzije ju. Ak sablona nie je nastavena, vytvori jednoduchy PDF dokument.
 
+V chat rozhrani je offboarding/protokol dvojkrokovy:
+- bot najprv najde Jira pouzivatela a jeho priradene HW Assets objekty
+- opyta sa, ktore zariadenie sa odovzdava
+- po vybere cislom, Assets klucom alebo textom vygeneruje dokument z aktivnej sablony
+- po vygenerovani dokumentu sa pokusi vycistit volitelny editable assignment atribut v Assets, napr. `Assigned user`
+
 ### Print protocol in Jira Assets (odovzdavaci protokol)
 
 `POST /assets/print-protocol`

@@ -639,10 +639,16 @@ def _extract_offboarding_person(text: str, parsed: dict[str, Any] | None = None)
     return cleaned if len(cleaned) >= 2 else None
 
 
-def _build_offboarding_document_context(user_identifier: str, extra_text: str | None) -> dict[str, Any]:
+def _build_offboarding_document_context(
+    user_identifier: str,
+    extra_text: str | None,
+    selected_assets: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     matched_user = _resolve_user_for_assets(user_identifier)
     assets: list[dict[str, Any]] = []
-    if _assets_enabled():
+    if selected_assets is not None:
+        assets = selected_assets
+    elif _assets_enabled():
         try:
             asset_user, user_assets = _assets_for_user(
                 (matched_user or {}).get("displayName") or user_identifier,
@@ -697,8 +703,9 @@ def _generate_offboarding_document(
     user_identifier: str,
     extra_text: str | None = None,
     template_id: str | None = None,
+    selected_assets: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    context = _build_offboarding_document_context(user_identifier, extra_text)
+    context = _build_offboarding_document_context(user_identifier, extra_text, selected_assets=selected_assets)
     template = template_store.get(template_id) if template_id else template_store.active()
     if template_id and not template:
         raise HTTPException(status_code=404, detail="Offboarding template not found.")
@@ -733,6 +740,207 @@ def _generate_offboarding_document(
         "template_error": template_error,
         **context,
     }
+
+
+def _asset_identity(asset: dict[str, Any]) -> str:
+    return str(asset.get("objectKey") or asset.get("id") or asset.get("label") or "").strip()
+
+
+def _asset_selection_text(asset: dict[str, Any]) -> str:
+    return _normalize_lookup_text(
+        f"{asset.get('objectKey','')} {asset.get('label','')} {asset.get('objectType','')} {_format_device_name(asset)}"
+    )
+
+
+def _select_assets_from_message(message: str, assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    text = message.strip()
+    text_norm = _normalize_lookup_text(text)
+    if not text_norm or not assets:
+        return []
+    if re.search(r"\b(vsetky|všetky|all|oba|obidva|vsetko|všetko)\b", text_norm):
+        return assets
+
+    selected: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for number in re.findall(r"\b\d+\b", text_norm):
+        index = int(number) - 1
+        if 0 <= index < len(assets):
+            identity = _asset_identity(assets[index])
+            if identity not in seen:
+                selected.append(assets[index])
+                seen.add(identity)
+
+    for asset in assets:
+        identity = _asset_identity(asset)
+        if identity and identity.lower() in text.lower() and identity not in seen:
+            selected.append(asset)
+            seen.add(identity)
+            continue
+        asset_text = _asset_selection_text(asset)
+        if len(text_norm) >= 3 and asset_text and (text_norm in asset_text or asset_text in text_norm) and identity not in seen:
+            selected.append(asset)
+            seen.add(identity)
+
+    return selected
+
+
+def _format_asset_choices(assets: list[dict[str, Any]]) -> str:
+    lines = []
+    for index, asset in enumerate(assets, start=1):
+        serial = _asset_attr_value(
+            asset,
+            [
+                "Serial Number",
+                "Serial",
+                "Serial number",
+                "S/N",
+                "SN",
+                "Seriove cislo",
+                "Sériové číslo",
+                "Seriove c.",
+            ],
+        )
+        suffix = f", SN: {serial}" if serial else ""
+        lines.append(f"{index}) {_format_device_name(asset)}{suffix}")
+    return "\n".join(lines)
+
+
+def _offboarding_selection_prompt(user: dict[str, Any], assets: list[dict[str, Any]]) -> ChatResponse:
+    display_name = user.get("displayName") or user.get("display_name") or "pouzivatel"
+    message = (
+        f"Nasiel som tieto zariadenia pre {display_name}. Ktore sa odovzdava?\n"
+        f"{_format_asset_choices(assets)}\n\n"
+        "Odpovedz cislom, Assets klucom (napr. CDX-4), nazvom zariadenia alebo napis \"vsetky\"."
+    )
+    return ChatResponse(
+        action="offboarding_select_asset",
+        message=message,
+        data={
+            "pending_action": {
+                "type": "offboarding_select_asset",
+                "user_identifier": display_name,
+                "extra_text": "",
+                "assets": assets,
+            },
+            "total": len(assets),
+            "objects": assets,
+        },
+    )
+
+
+def _find_assignment_attribute(raw_asset: dict[str, Any], user_hint: str | None = None) -> dict[str, Any] | None:
+    normalized_user = _normalize_lookup_text(user_hint or "")
+    preferred_names = [
+        "assigned user",
+        "assigned to",
+        "assignee",
+        "owner",
+        "user",
+        "pouzivatel",
+        "používateľ",
+        "drzitel",
+        "držiteľ",
+    ]
+    scored: list[tuple[int, dict[str, Any]]] = []
+    for attr in raw_asset.get("attributes") or []:
+        ota = attr.get("objectTypeAttribute") or {}
+        if ota.get("editable") is False:
+            continue
+        if int(ota.get("minimumCardinality") or 0) > 0:
+            continue
+        name_norm = _normalize_lookup_text(str(ota.get("name") or ""))
+        values_text = _normalize_lookup_text(json.dumps(attr.get("objectAttributeValues") or [], ensure_ascii=False))
+        score = 0
+        for index, preferred in enumerate(preferred_names):
+            if preferred in name_norm:
+                score += 100 - index
+        if normalized_user and normalized_user in values_text:
+            score += 30
+        if score > 0:
+            scored.append((score, attr))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return scored[0][1] if scored else None
+
+
+def _unassign_asset_from_user(asset: dict[str, Any], user_hint: str | None = None) -> dict[str, Any]:
+    workspace_id = _require_assets_workspace()
+    object_id_or_key = _asset_identity(asset)
+    if not object_id_or_key:
+        raise RuntimeError("Assets object has no key/id.")
+    raw_asset = jira.get_asset_object(workspace_id=workspace_id, object_id_or_key=object_id_or_key)
+    object_type_id = str((raw_asset.get("objectType") or {}).get("id") or "")
+    if not object_type_id:
+        raise RuntimeError(f"Assets object {object_id_or_key} has no objectTypeId.")
+    assignment_attr = _find_assignment_attribute(raw_asset, user_hint=user_hint)
+    if not assignment_attr:
+        raise RuntimeError(f"No editable optional assignment attribute found on {object_id_or_key}.")
+    attr_id = str(
+        assignment_attr.get("objectTypeAttributeId")
+        or (assignment_attr.get("objectTypeAttribute") or {}).get("id")
+        or ""
+    )
+    if not attr_id:
+        raise RuntimeError(f"Assignment attribute on {object_id_or_key} has no id.")
+    updated = jira.update_asset_object(
+        workspace_id=workspace_id,
+        object_id_or_key=str(raw_asset.get("id") or object_id_or_key),
+        object_type_id=object_type_id,
+        attributes=[
+            {
+                "objectTypeAttributeId": attr_id,
+                "objectAttributeValues": [],
+            }
+        ],
+    )
+    return {
+        "object_key": raw_asset.get("objectKey") or object_id_or_key,
+        "label": raw_asset.get("label"),
+        "cleared_attribute": ((assignment_attr.get("objectTypeAttribute") or {}).get("name") or attr_id),
+        "updated": flatten_assets_object(updated),
+    }
+
+
+def _complete_offboarding_asset_selection(pending: dict[str, Any], message: str) -> ChatResponse:
+    assets = pending.get("assets") if isinstance(pending.get("assets"), list) else []
+    selected_assets = _select_assets_from_message(message, assets)
+    if not selected_assets:
+        return ChatResponse(
+            action="offboarding_select_asset",
+            message=(
+                "Neviem jednoznacne vybrat zariadenie. "
+                "Napis prosim cislo zo zoznamu, Assets kluc ako CDX-4, alebo \"vsetky\".\n"
+                f"{_format_asset_choices(assets)}"
+            ),
+            data={"pending_action": pending, "total": len(assets), "objects": assets},
+        )
+
+    user_identifier = str(pending.get("user_identifier") or "").strip()
+    extra_text = str(pending.get("extra_text") or "").strip()
+    generated = _generate_offboarding_document(
+        user_identifier=user_identifier,
+        extra_text=extra_text,
+        selected_assets=selected_assets,
+    )
+    unassign_results = []
+    unassign_errors = []
+    for asset in selected_assets:
+        try:
+            unassign_results.append(_unassign_asset_from_user(asset, user_hint=generated["user"]["display_name"]))
+        except Exception as exc:  # noqa: BLE001
+            unassign_errors.append({"asset": _format_device_name(asset), "error": str(exc)})
+    generated["selected_assets"] = selected_assets
+    generated["unassigned_assets"] = unassign_results
+    generated["unassign_errors"] = unassign_errors
+    suffix = ""
+    if unassign_results:
+        suffix += f" Odassignoval som {len(unassign_results)} zariadeni v Assets."
+    if unassign_errors:
+        suffix += f" Pozor: {len(unassign_errors)} zariadeni sa nepodarilo odassignovat."
+    return ChatResponse(
+        action="offboarding",
+        message=f"Offboarding dokument je pripraveny pre {generated['user']['display_name']}.{suffix}",
+        data=generated,
+    )
 
 
 def _extract_issue_key_from_history(history: list[dict[str, str]] | None) -> str | None:
@@ -1316,6 +1524,9 @@ def chat(payload: ChatRequest) -> ChatResponse:
             action = "assets_search"
 
         pending = payload.pending_action or {}
+        if pending.get("type") == "offboarding_select_asset":
+            return _complete_offboarding_asset_selection(pending, payload.message)
+
         if pending.get("type") == "assign_all_unassigned" and yes_all_hint:
             assignee_query = str(pending.get("assignee_query") or "").strip()
             if not assignee_query:
@@ -1537,6 +1748,28 @@ def chat(payload: ChatRequest) -> ChatResponse:
                     message="Jasne. Napis prosim meno alebo email cloveka, napriklad: offboarding Imrich Koch.",
                     data=None,
                 )
+            if _assets_enabled():
+                matched_user, user_assets = _assets_for_user(user_identifier, max_results=25, only_hw=True)
+                if matched_user and user_assets:
+                    response = _offboarding_selection_prompt(matched_user, user_assets)
+                    if response.data and isinstance(response.data.get("pending_action"), dict):
+                        response.data["pending_action"]["user_identifier"] = (
+                            matched_user.get("displayName")
+                            or matched_user.get("emailAddress")
+                            or user_identifier
+                        )
+                        response.data["pending_action"]["extra_text"] = _extract_extra_text(payload.message)
+                    return response
+                if matched_user and not user_assets:
+                    return ChatResponse(
+                        action="offboarding",
+                        message=(
+                            f"Nasiel som pouzivatela {matched_user.get('displayName')}, "
+                            "ale nenasiel som mu priradene HW zariadenie v Assets. "
+                            "Protokol nevygenerujem, aby nebol nepresny."
+                        ),
+                        data={"user": matched_user, "total": 0, "objects": []},
+                    )
             generated = _generate_offboarding_document(
                 user_identifier=user_identifier,
                 extra_text=_extract_extra_text(payload.message),

@@ -167,3 +167,29 @@ class JiraClient:
 
     def get_asset_object(self, *, workspace_id: str, object_id_or_key: str) -> dict[str, Any]:
         return self._request("GET", f"/gateway/api/jsm/assets/workspace/{workspace_id}/v1/object/{object_id_or_key}")
+
+    def update_asset_object(
+        self,
+        *,
+        workspace_id: str,
+        object_id_or_key: str,
+        object_type_id: str,
+        attributes: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        payload = {
+            "objectTypeId": str(object_type_id),
+            "attributes": attributes,
+        }
+        candidates = [
+            f"/jsm/assets/workspace/{workspace_id}/v1/object/{object_id_or_key}",
+            f"/gateway/api/jsm/assets/workspace/{workspace_id}/v1/object/{object_id_or_key}",
+        ]
+        last_error: Exception | None = None
+        for path in candidates:
+            try:
+                return self._request("PUT", path, json=payload)
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+        if last_error:
+            raise RuntimeError(str(last_error))
+        raise RuntimeError("Assets object update failed with unknown error.")
