@@ -43,9 +43,18 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
+      gap: 12px;
     }
     .title { font-weight: 700; letter-spacing: 0.2px; }
     .hint { color: var(--muted); font-size: 13px; }
+    .admin-link {
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 13px;
+      text-decoration: none;
+    }
     .chat {
       padding: 18px;
       overflow-y: auto;
@@ -104,6 +113,7 @@
     <header class="header">
       <div class="title">Jira AI Chat Bot</div>
       <div class="hint">Try: "Najdi otvorene tickety" alebo "Sprav summary pre KAN-1"</div>
+      <a class="admin-link" href="/admin">Admin</a>
     </header>
     <section class="chat" id="chat"></section>
     <form class="composer" id="form">

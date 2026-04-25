@@ -4,6 +4,7 @@ Minimal backend bot, ktory vie:
 - vytvorit ticket v Jira
 - spravit AI summary z existujuceho ticketu
 - vyhladavat podla prirodzeneho textu (AI prelozi text na JQL)
+- admin rozhranie pre spravu adminov, AI modelu, system promptu a `skills.md`
 
 ## 1) Setup
 
@@ -24,6 +25,8 @@ Vypln `.env`:
 - `OPENAI_BASE_URL` nechaj prazdne pre OpenAI, alebo nastav na `https://openrouter.ai/api/v1` pre OpenRouter
 - `OPENROUTER_SITE_URL` a `OPENROUTER_APP_NAME` su volitelne, ale odporucane pri OpenRouter
 - `ASSETS_WORKSPACE_ID` workspace ID pre Jira Assets (nutne pre Assets endpointy)
+- `APP_DATA_DIR` volitelne miesto pre admin databazu a runtime nastavenia
+- `ADMIN_BOOTSTRAP_USERNAME` a `ADMIN_BOOTSTRAP_PASSWORD` volitelne pre vytvorenie prveho admina
 
 ## 2) Spustenie
 
@@ -202,19 +205,47 @@ Priklad:
 
 Vrati markdown protokol s atributmi objektu.
 
-## 4) Poznamky k bezpecnosti
+## 4) Admin rozhranie
+
+Admin UI bezi na:
+- `/admin`
+
+Admin vie:
+- vytvarat dalsich adminov
+- vybrat AI model pre dalsie odpovede bota
+- menit system prompt
+- menit `skills.md`, ktory sa priklada k AI instrukciam
+
+Prvy admin sa da bootstrapnut cez env premenne:
+- `ADMIN_BOOTSTRAP_USERNAME`
+- `ADMIN_BOOTSTRAP_PASSWORD`
+
+Po vytvoreni prveho admina je vhodne bootstrap hodnoty z env suboru odstranit a restartovat sluzbu. Existujuci admin zostane ulozeny v SQLite databaze.
+
+Runtime data sa ukladaju do `data/` alebo do cesty z `APP_DATA_DIR`:
+- `admin.sqlite3` obsahuje admin ucty, zahashovane hesla a session tokeny
+- `bot_settings.json` obsahuje aktualny model a system prompt
+- `skills.md` obsahuje editable instrukcie/schopnosti bota
+
+`data/` je v `.gitignore`, aby sa do GitHubu nedostali hesla, tokeny, session ani produkcne nastavenia.
+
+Poznamka k `skills.md`: sluzi ako prakticka vrstva instrukcii pre Jira bota. Admin moze menit spravanie bota bez deployu, napriklad styl odpovedi, pravidla pre Jira tickety alebo sposob, ako ma interpretovat poziadavky v chate.
+
+## 5) Poznamky k bezpecnosti
 
 - API tokeny drzat iba v `.env` (nikdy necommitovat).
-- V produkcii pridaj autentifikaciu endpointov (napr. API key/JWT).
+- Admin hesla su ukladane hashovane, nie ako plaintext.
+- Admin session token sa uklada v browseri do `localStorage`, preto admin rozhranie pouzivaj iba cez HTTPS.
+- Verejne API endpointy maju stale rovnake spravanie ako doteraz; ak ich budes chciet uzamknut, doplnime API key/JWT aj pre `/chat` a Jira endpointy.
 - Ak AI vrati divne JQL, `jql_guard.py` ho vie odmietnut.
 
-## 5) Dalsie rozsireniа
+## 6) Dalsie rozsirenia
 
 - `/tickets/update` endpoint
 - deduplikacia pri create (podla fingerprintu)
 - Slack/Teams chat vrstva nad tymto API
 
-## 6) Chat widget v Jira (Forge)
+## 7) Chat widget v Jira (Forge)
 
 Endpoint pre Forge widget:
 - `POST /chat/widget`

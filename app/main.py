@@ -5,15 +5,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
+from app.admin_store import AdminStore
 from app.ai_client import AIClient
 from app.analysis import cosine_similarity, extract_adf_text, flatten_assets_object, overlap_keywords
 from app.config import get_settings
 from app.jira_client import JiraClient
 from app.jql_guard import JQLValidationError, validate_jql
+from app.runtime_settings import RuntimeSettingsStore
 from app.schemas import (
     CreateTicketRequest,
     CreateTicketResponse,
@@ -42,11 +45,57 @@ from app.schemas import (
 app = FastAPI(title="Jira AI Bot API", version="0.1.0")
 
 settings = get_settings()
-jira = JiraClient(settings)
-ai = AIClient(settings)
 BASE_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = BASE_DIR.parent
+DATA_DIR = Path(settings.app_data_dir) if settings.app_data_dir else PROJECT_DIR / "data"
+runtime_settings = RuntimeSettingsStore(
+    data_dir=DATA_DIR,
+    default_model=settings.openai_model,
+    repo_skills_path=PROJECT_DIR / "skills.md",
+)
+admin_store = AdminStore(DATA_DIR / "admin.sqlite3")
+admin_store.bootstrap_admin(settings.admin_bootstrap_username, settings.admin_bootstrap_password)
+jira = JiraClient(settings)
+ai = AIClient(settings, runtime_context=runtime_settings.ai_context)
 STATIC_DIR = BASE_DIR / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+AVAILABLE_MODELS = [
+    "gpt-5.4-mini",
+    "gpt-5.4",
+    "gpt-5.3-codex",
+    "gpt-5-mini",
+    "gpt-4.1",
+    "openai/gpt-5.4-mini",
+]
+
+
+class AdminLoginRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=80)
+    password: str = Field(min_length=1, max_length=500)
+
+
+class AdminCreateRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=80)
+    password: str = Field(min_length=10, max_length=500)
+    display_name: str | None = Field(default=None, max_length=120)
+
+
+class BotSettingsRequest(BaseModel):
+    model: str = Field(min_length=2, max_length=120)
+    system_prompt: str = Field(min_length=1, max_length=8000)
+    skills_md: str = Field(default="", max_length=20000)
+
+
+def _require_admin(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Admin login required.")
+    token = authorization.split(" ", 1)[1].strip()
+    admin = admin_store.get_session_admin(token)
+    if not admin:
+        raise HTTPException(status_code=401, detail="Invalid or expired admin session.")
+    return admin
 
 
 @app.get("/health")
@@ -57,6 +106,64 @@ def health() -> dict[str, str]:
 @app.get("/")
 def chat_ui() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/admin")
+def admin_ui() -> FileResponse:
+    return FileResponse(STATIC_DIR / "admin.html")
+
+
+@app.post("/admin/api/login")
+def admin_login(payload: AdminLoginRequest) -> dict[str, Any]:
+    admin = admin_store.authenticate(username=payload.username, password=payload.password)
+    if not admin:
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+    token = admin_store.create_session(int(admin["id"]))
+    return {"token": token, "admin": admin}
+
+
+@app.get("/admin/api/me")
+def admin_me(admin: dict[str, Any] = Depends(_require_admin)) -> dict[str, Any]:
+    return {"admin": admin}
+
+
+@app.get("/admin/api/admins")
+def admin_list(admin: dict[str, Any] = Depends(_require_admin)) -> dict[str, Any]:
+    return {"admins": admin_store.list_admins()}
+
+
+@app.post("/admin/api/admins")
+def admin_create(payload: AdminCreateRequest, admin: dict[str, Any] = Depends(_require_admin)) -> dict[str, Any]:
+    try:
+        created = admin_store.create_admin(
+            username=payload.username,
+            password=payload.password,
+            display_name=payload.display_name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Admin account could not be created.") from exc
+    return {"admin": created}
+
+
+@app.get("/admin/api/settings")
+def admin_get_settings(admin: dict[str, Any] = Depends(_require_admin)) -> dict[str, Any]:
+    data = runtime_settings.get()
+    return {"settings": data, "available_models": AVAILABLE_MODELS}
+
+
+@app.put("/admin/api/settings")
+def admin_update_settings(payload: BotSettingsRequest, admin: dict[str, Any] = Depends(_require_admin)) -> dict[str, Any]:
+    try:
+        data = runtime_settings.update(
+            model=payload.model,
+            system_prompt=payload.system_prompt,
+            skills_md=payload.skills_md,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"settings": data, "available_models": AVAILABLE_MODELS}
 
 
 def _search_logic(query: str, max_results: int) -> SearchTicketsResponse:

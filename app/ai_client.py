@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Any
 
 from openai import OpenAI
@@ -9,8 +10,9 @@ from app.config import Settings
 
 
 class AIClient:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, runtime_context: Callable[[], dict[str, str]] | None = None) -> None:
         self._model = settings.openai_model
+        self._runtime_context = runtime_context
         default_headers: dict[str, str] = {}
         if settings.openai_base_url and "openrouter.ai" in settings.openai_base_url:
             if settings.openrouter_site_url:
@@ -26,11 +28,36 @@ class AIClient:
 
         self._client = OpenAI(**client_kwargs)
 
-    def _text_response(self, instructions: str, user_input: str) -> str:
+    def _current_context(self) -> dict[str, str]:
+        if not self._runtime_context:
+            return {}
+        try:
+            return self._runtime_context()
+        except Exception:
+            return {}
+
+    def _runtime_instructions(self, instructions: str) -> str:
+        context = self._current_context()
+        system_prompt = (context.get("system_prompt") or "").strip()
+        skills_md = (context.get("skills_md") or "").strip()
+        parts = []
+        if system_prompt:
+            parts.append(f"Admin system prompt:\n{system_prompt}")
+        if skills_md:
+            parts.append(f"skills.md:\n{skills_md}")
+        parts.append(f"Task instructions:\n{instructions}")
+        return "\n\n".join(parts)
+
+    def _current_model(self) -> str:
+        context = self._current_context()
+        return (context.get("model") or self._model).strip() or self._model
+
+    def _text_response(self, instructions: str, user_input: str, *, apply_runtime: bool = True) -> str:
+        final_instructions = self._runtime_instructions(instructions) if apply_runtime else instructions
         response = self._client.responses.create(
-            model=self._model,
+            model=self._current_model(),
             input=[
-                {"role": "system", "content": instructions},
+                {"role": "system", "content": final_instructions},
                 {"role": "user", "content": user_input},
             ],
         )
@@ -67,7 +94,7 @@ class AIClient:
             "6) Add ORDER BY updated DESC when useful.\n"
             f"Default project is: {default_project}"
         )
-        return self._text_response(instructions, user_query)
+        return self._text_response(instructions, user_query, apply_runtime=False)
 
     def detect_chat_action(self, *, user_message: str, default_project: str, default_issue_type: str) -> dict[str, Any]:
         instructions = (
@@ -104,7 +131,7 @@ class AIClient:
             f"Default issue_type: {default_issue_type}\n"
             "If a field is unknown, set it to null."
         )
-        output = self._text_response(instructions, user_message)
+        output = self._text_response(instructions, user_message, apply_runtime=False)
         return self._parse_json_object(output)
 
     def general_chat_reply(self, *, user_message: str, assets_enabled: bool) -> str:
@@ -125,7 +152,7 @@ class AIClient:
             "Use contains matching with ~ where possible.\n"
             "Keep query read-only."
         )
-        return self._text_response(instructions, user_query)
+        return self._text_response(instructions, user_query, apply_runtime=False)
 
     def build_offboarding_checklist(self, *, user_identifier: str, items_payload: dict[str, Any]) -> str:
         instructions = (

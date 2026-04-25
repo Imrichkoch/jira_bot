@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="sk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Jira Bot Admin</title>
+  <style>
+    :root {
+      --bg: #f4f5f7;
+      --panel: #ffffff;
+      --text: #172b4d;
+      --muted: #5e6c84;
+      --border: #dfe1e6;
+      --accent: #0c66e4;
+      --accent-strong: #0055cc;
+      --danger: #ae2e24;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+    .shell {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 24px 0 40px;
+    }
+    .top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    h1 {
+      font-size: 22px;
+      margin: 0;
+      letter-spacing: 0;
+    }
+    .muted { color: var(--muted); font-size: 13px; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    label {
+      display: block;
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 6px;
+      color: #44546f;
+    }
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 9px 10px;
+      font: inherit;
+      color: var(--text);
+      background: #fff;
+    }
+    textarea {
+      min-height: 170px;
+      resize: vertical;
+      line-height: 1.45;
+    }
+    .skills {
+      min-height: 260px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+    }
+    .row {
+      display: flex;
+      gap: 10px;
+      align-items: end;
+    }
+    .row > * { flex: 1; }
+    button, .link-button {
+      border: 0;
+      border-radius: 6px;
+      background: var(--accent);
+      color: #fff;
+      padding: 9px 12px;
+      font-weight: 700;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 38px;
+    }
+    button:hover, .link-button:hover { background: var(--accent-strong); }
+    button.secondary {
+      background: #f1f2f4;
+      color: var(--text);
+    }
+    button.secondary:hover { background: #dfe1e6; }
+    .hidden { display: none; }
+    .status {
+      margin-top: 10px;
+      font-size: 13px;
+      color: var(--muted);
+      min-height: 20px;
+      white-space: pre-wrap;
+    }
+    .status.error { color: var(--danger); }
+    .admins {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .admin-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px;
+      background: #fafbfc;
+    }
+    @media (max-width: 760px) {
+      .grid, .row { grid-template-columns: 1fr; display: grid; }
+      .top { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="top">
+      <div>
+        <h1>Jira Bot Admin</h1>
+        <div class="muted">Model, system prompt, skills.md a admin ucty</div>
+      </div>
+      <a class="link-button" href="/">Chat</a>
+    </div>
+
+    <section id="loginPanel" class="panel">
+      <h2>Login</h2>
+      <div class="row">
+        <div>
+          <label for="loginUsername">Username</label>
+          <input id="loginUsername" autocomplete="username" />
+        </div>
+        <div>
+          <label for="loginPassword">Password</label>
+          <input id="loginPassword" type="password" autocomplete="current-password" />
+        </div>
+        <button id="loginButton" type="button">Login</button>
+      </div>
+      <div id="loginStatus" class="status"></div>
+    </section>
+
+    <section id="adminPanel" class="hidden">
+      <section class="panel">
+        <div class="top">
+          <div>
+            <h2>Nastavenia bota</h2>
+            <div id="currentAdmin" class="muted"></div>
+          </div>
+          <button id="logoutButton" class="secondary" type="button">Logout</button>
+        </div>
+        <div class="grid">
+          <div>
+            <label for="model">AI model</label>
+            <input id="model" list="modelList" />
+            <datalist id="modelList"></datalist>
+          </div>
+          <div>
+            <label>Aktualne pravidlo</label>
+            <div class="muted">Zmena plati hned pre dalsie AI odpovede.</div>
+          </div>
+        </div>
+        <div style="margin-top: 14px;">
+          <label for="systemPrompt">System prompt</label>
+          <textarea id="systemPrompt"></textarea>
+        </div>
+        <div style="margin-top: 14px;">
+          <label for="skillsMd">skills.md</label>
+          <textarea id="skillsMd" class="skills"></textarea>
+        </div>
+        <button id="saveSettingsButton" type="button" style="margin-top: 12px;">Ulozit nastavenia</button>
+        <div id="settingsStatus" class="status"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Admin ucty</h2>
+        <div class="row">
+          <div>
+            <label for="newUsername">Username</label>
+            <input id="newUsername" autocomplete="off" />
+          </div>
+          <div>
+            <label for="newDisplayName">Display name</label>
+            <input id="newDisplayName" autocomplete="off" />
+          </div>
+          <div>
+            <label for="newPassword">Password</label>
+            <input id="newPassword" type="password" autocomplete="new-password" />
+          </div>
+          <button id="createAdminButton" type="button">Vytvorit admina</button>
+        </div>
+        <div id="adminStatus" class="status"></div>
+        <div id="adminsList" class="admins"></div>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    const tokenKey = "jiraBotAdminToken";
+    const $ = (id) => document.getElementById(id);
+
+    function token() {
+      return localStorage.getItem(tokenKey) || "";
+    }
+
+    async function api(path, options = {}) {
+      const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+      if (token()) headers.Authorization = `Bearer ${token()}`;
+      const res = await fetch(path, { ...options, headers });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.detail || "Request failed");
+      return body;
+    }
+
+    function showLoggedIn(show) {
+      $("loginPanel").classList.toggle("hidden", show);
+      $("adminPanel").classList.toggle("hidden", !show);
+    }
+
+    function setStatus(id, text, error = false) {
+      const el = $(id);
+      el.textContent = text;
+      el.classList.toggle("error", error);
+    }
+
+    async function loadAll() {
+      const me = await api("/admin/api/me");
+      $("currentAdmin").textContent = `Prihlaseny: ${me.admin.display_name || me.admin.username}`;
+      showLoggedIn(true);
+      await Promise.all([loadSettings(), loadAdmins()]);
+    }
+
+    async function loadSettings() {
+      const data = await api("/admin/api/settings");
+      $("model").value = data.settings.model || "";
+      $("systemPrompt").value = data.settings.system_prompt || "";
+      $("skillsMd").value = data.settings.skills_md || "";
+      $("modelList").innerHTML = "";
+      for (const model of data.available_models || []) {
+        const option = document.createElement("option");
+        option.value = model;
+        $("modelList").appendChild(option);
+      }
+    }
+
+    async function loadAdmins() {
+      const data = await api("/admin/api/admins");
+      $("adminsList").innerHTML = "";
+      for (const admin of data.admins || []) {
+        const item = document.createElement("div");
+        item.className = "admin-item";
+        item.innerHTML = `<strong>${admin.username}</strong><span class="muted">${admin.display_name || ""}</span>`;
+        $("adminsList").appendChild(item);
+      }
+    }
+
+    $("loginButton").addEventListener("click", async () => {
+      try {
+        setStatus("loginStatus", "Prihlasujem...");
+        const data = await api("/admin/api/login", {
+          method: "POST",
+          body: JSON.stringify({ username: $("loginUsername").value, password: $("loginPassword").value }),
+        });
+        localStorage.setItem(tokenKey, data.token);
+        setStatus("loginStatus", "");
+        await loadAll();
+      } catch (err) {
+        setStatus("loginStatus", err.message, true);
+      }
+    });
+
+    $("logoutButton").addEventListener("click", () => {
+      localStorage.removeItem(tokenKey);
+      showLoggedIn(false);
+    });
+
+    $("saveSettingsButton").addEventListener("click", async () => {
+      try {
+        setStatus("settingsStatus", "Ukladam...");
+        await api("/admin/api/settings", {
+          method: "PUT",
+          body: JSON.stringify({
+            model: $("model").value,
+            system_prompt: $("systemPrompt").value,
+            skills_md: $("skillsMd").value,
+          }),
+        });
+        setStatus("settingsStatus", "Ulozene.");
+      } catch (err) {
+        setStatus("settingsStatus", err.message, true);
+      }
+    });
+
+    $("createAdminButton").addEventListener("click", async () => {
+      try {
+        setStatus("adminStatus", "Vytvaram...");
+        await api("/admin/api/admins", {
+          method: "POST",
+          body: JSON.stringify({
+            username: $("newUsername").value,
+            display_name: $("newDisplayName").value,
+            password: $("newPassword").value,
+          }),
+        });
+        $("newPassword").value = "";
+        setStatus("adminStatus", "Admin vytvoreny.");
+        await loadAdmins();
+      } catch (err) {
+        setStatus("adminStatus", err.message, true);
+      }
+    });
+
+    if (token()) {
+      loadAll().catch(() => {
+        localStorage.removeItem(tokenKey);
+        showLoggedIn(false);
+      });
+    }
+  </script>
+</body>
+</html>
