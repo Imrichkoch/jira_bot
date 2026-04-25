@@ -500,8 +500,11 @@ def _extract_offboarding_person(text: str, parsed: dict[str, Any] | None = None)
         text,
         flags=re.IGNORECASE | re.DOTALL,
     )
+    pre_match = re.search(r"\bpre\s+(.+)$", cleaned, flags=re.IGNORECASE)
+    if pre_match:
+        cleaned = pre_match.group(1)
     cleaned = re.sub(
-        r"\b(?:offboardingovat|offboardovat|offboarding|offboard|ofboarding|ofbord|offbord|offbordnigovat|ofbordnigovat|offbordnig|offboardni|offboarduj|ukoncenie|ukončenie|odovzdavaci|odovzdávací|protokol|vratenie|vrátenie|zariadenia|zariadeni|zamestnanca|pouzivatela|používateľa|pre|for)\b",
+        r"\b(?:vyrob|vytvor|sprav|urob|mi|prosim|prosím|offboardingovat|offboardovat|offboarding|offboard|ofboarding|ofbord|offbord|offbordnigovat|ofbordnigovat|offbordnig|offboardni|offboarduj|ukoncenie|ukončenie|odovzdavaci|odovzdávací|preberaci|preberací|protokol|vratenie|vrátenie|zariadenia|zariadeni|zamestnanca|pouzivatela|používateľa|pre|for)\b",
         " ",
         cleaned,
         flags=re.IGNORECASE,
@@ -577,19 +580,33 @@ def _generate_offboarding_document(
         raise HTTPException(status_code=404, detail="Offboarding template not found.")
     safe_user = re.sub(r"[^a-zA-Z0-9_-]+", "-", context["values"]["employee_name"]).strip("-") or "user"
     file_stem = f"offboarding-{safe_user}-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
-    result = render_offboarding_document(
-        template_store=template_store,
-        template=template,
-        output_dir=STATIC_DIR / "offboarding",
-        values=context["values"],
-        file_stem=file_stem,
-    )
+    template_error = None
+    try:
+        result = render_offboarding_document(
+            template_store=template_store,
+            template=template,
+            output_dir=STATIC_DIR / "offboarding",
+            values=context["values"],
+            file_stem=file_stem,
+        )
+    except Exception as exc:
+        if not template:
+            raise
+        template_error = str(exc)
+        result = render_offboarding_document(
+            template_store=template_store,
+            template=None,
+            output_dir=STATIC_DIR / "offboarding",
+            values=context["values"],
+            file_stem=f"{file_stem}-fallback",
+        )
     document_url = f"/static/offboarding/{result['file_name']}"
     return {
         "document_url": document_url,
         "file_name": result["file_name"],
         "format": result["format"],
         "template": {"id": template.get("id"), "name": template.get("name")} if template else None,
+        "template_error": template_error,
         **context,
     }
 
@@ -1119,8 +1136,8 @@ def chat(payload: ChatRequest) -> ChatResponse:
                 lower_message,
             )
             or (
-                re.search(r"\b(odovzdavaci|odovzdávací|vratenie|vrátenie)\b", lower_message)
-                and re.search(r"\b(zariaden|pc|laptop|notebook|hardware)\b", lower_message)
+                re.search(r"\b(odovzdavaci|odovzdávací|preberaci|preberací|vratenie|vrátenie)\b", lower_message)
+                and re.search(r"\b(protokol|zariaden|pc|laptop|notebook|hardware)\b", lower_message)
             )
         )
         help_hint = bool(re.search(r"\b(help|pomoc|co vies|co dokazes|what can you do|capabilities)\b", lower_message))

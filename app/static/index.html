@@ -117,6 +117,15 @@
       font-weight: 700;
       text-decoration: none;
     }
+    .pdf-inline {
+      display: block;
+      width: min(760px, 100%);
+      height: 420px;
+      margin-top: 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #07101e;
+    }
   </style>
 </head>
 <body>
@@ -142,7 +151,7 @@
     let pendingAction = null;
     const conversation = [];
 
-    function addBubble(text, role, links = []) {
+    function addBubble(text, role, links = [], embeds = []) {
       const el = document.createElement("div");
       el.className = `bubble ${role}`;
       const body = document.createElement("div");
@@ -157,6 +166,14 @@
         a.textContent = link.label;
         el.appendChild(a);
       }
+      for (const embed of embeds) {
+        if (embed.type !== "pdf") continue;
+        const iframe = document.createElement("iframe");
+        iframe.className = "pdf-inline";
+        iframe.src = embed.href;
+        iframe.title = embed.label || "PDF document";
+        el.appendChild(iframe);
+      }
       chatEl.appendChild(el);
       chatEl.scrollTop = chatEl.scrollHeight;
     }
@@ -170,6 +187,13 @@
         links.push({ href: data.data.protocol_url, label: "Stiahnut protokol" });
       }
       return links;
+    }
+
+    function responseEmbeds(data) {
+      if (data.data?.document_url && String(data.data?.format || "").toLowerCase() === "pdf") {
+        return [{ type: "pdf", href: data.data.document_url, label: data.data.file_name || "PDF dokument" }];
+      }
+      return [];
     }
 
     function addToConversation(role, content) {
@@ -196,6 +220,7 @@
       if (data.action === "offboarding" && data.data?.document_url) {
         const lines = [data.message || "Offboarding dokument je pripraveny."];
         if (data.data?.template?.name) lines.push(`Sablona: ${data.data.template.name}`);
+        if (data.data?.template_error) lines.push(`Poznamka: sablona nesla vyplnit, preto som vytvoril zalozny PDF dokument.`);
         if (data.data?.format) lines.push(`Format: ${data.data.format}`);
         if (Array.isArray(data.data?.assets)) lines.push(`Zariadenia: ${data.data.assets.length}`);
         lines.push(`Subor: ${data.data.document_url}`);
@@ -288,7 +313,7 @@
         } else {
           captureContextIssue(data);
           const normalized = normalizeResponse(data);
-          addBubble(normalized, "bot", responseLinks(data));
+          addBubble(normalized, "bot", responseLinks(data), responseEmbeds(data));
           addToConversation("assistant", normalized);
         }
       } catch (err) {

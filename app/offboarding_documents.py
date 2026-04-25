@@ -266,6 +266,7 @@ def render_pdf_template(template_path: Path, output_path: Path, values: dict[str
         packet = BytesIO()
         overlay_canvas = canvas.Canvas(packet, pagesize=(width, height))
         _draw_pdf_values(overlay_canvas, width=width, height=height, values=values, fields=fields, page=index + 1)
+        overlay_canvas.showPage()
         overlay_canvas.save()
         packet.seek(0)
         overlay_pdf = PdfReader(packet)

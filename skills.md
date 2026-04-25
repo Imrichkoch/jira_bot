@@ -10,6 +10,7 @@
 
 ## Offboarding documents
 - When the user asks to offboard someone, prepare a downloadable handover/return document.
+- Treat "preberaci protokol", "odovzdavaci protokol", and "vratenie zariadenia" for a person as offboarding document requests.
 - Resolve the Jira user, find assigned hardware in Assets, and include employee name, device name, serial number, and any extra text.
 - If the user does not provide a name or email, ask for the missing person identifier.
 
