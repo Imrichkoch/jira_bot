@@ -11,10 +11,21 @@ const issueEl = document.getElementById("issue");
 let issueKey = null;
 const conversation = [];
 
-function addBubble(text, role) {
+function addBubble(text, role, links = []) {
   const el = document.createElement("div");
   el.className = `bubble ${role}`;
-  el.textContent = text;
+  const body = document.createElement("div");
+  body.textContent = text;
+  el.appendChild(body);
+  for (const link of links) {
+    const a = document.createElement("a");
+    a.className = "download-link";
+    a.href = link.href;
+    a.target = "_blank";
+    a.rel = "noopener";
+    a.textContent = link.label;
+    el.appendChild(a);
+  }
   chatEl.appendChild(el);
   chatEl.scrollTop = chatEl.scrollHeight;
 }
@@ -80,6 +91,13 @@ function normalizeResponse(data) {
 
   const lines = [];
   lines.push(data.message || "Done.");
+  if (data.action === "offboarding" && data.data?.document_url) {
+    if (data.data?.template?.name) lines.push(`Sablona: ${data.data.template.name}`);
+    if (data.data?.format) lines.push(`Format: ${data.data.format}`);
+    if (Array.isArray(data.data?.assets)) lines.push(`Zariadenia: ${data.data.assets.length}`);
+    lines.push(`Subor: ${data.data.document_url}`);
+    return lines.join("\n");
+  }
   if (data.data?.summary) lines.push(`\n${data.data.summary}`);
   if (data.data?.jql) lines.push(`JQL: ${data.data.jql}`);
   if (Array.isArray(data.data?.issues) && data.data.issues.length) {
@@ -95,6 +113,20 @@ function normalizeResponse(data) {
     }
   }
   return lines.join("\n");
+}
+
+function responseLinks(data) {
+  const links = [];
+  if (data?.data?.document_url) {
+    links.push({
+      href: data.data.document_url,
+      label: `Stiahnut ${data.data.file_name || "dokument"}`
+    });
+  }
+  if (data?.data?.protocol_url) {
+    links.push({ href: data.data.protocol_url, label: "Stiahnut protokol" });
+  }
+  return links;
 }
 
 async function boot() {
@@ -151,7 +183,7 @@ formEl.addEventListener("submit", async (e) => {
       addToConversation("assistant", err);
     } else {
       const text = normalizeResponse(result.data);
-      addBubble(text, "bot");
+      addBubble(text, "bot", responseLinks(result.data));
       addToConversation("assistant", text);
     }
   } catch (err) {

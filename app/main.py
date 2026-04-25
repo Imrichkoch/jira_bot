@@ -1,6 +1,7 @@
 import re
 import json
 import unicodedata
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from app.analysis import cosine_similarity, extract_adf_text, flatten_assets_obj
 from app.config import get_settings
 from app.jira_client import JiraClient
 from app.jql_guard import JQLValidationError, validate_jql
+from app.offboarding_documents import OffboardingTemplateStore, render_offboarding_document
 from app.runtime_settings import RuntimeSettingsStore
 from app.schemas import (
     CreateTicketRequest,
@@ -55,6 +57,7 @@ runtime_settings = RuntimeSettingsStore(
 )
 admin_store = AdminStore(DATA_DIR / "admin.sqlite3")
 admin_store.bootstrap_admin(settings.admin_bootstrap_username, settings.admin_bootstrap_password)
+template_store = OffboardingTemplateStore(DATA_DIR)
 jira = JiraClient(settings)
 ai = AIClient(settings, runtime_context=runtime_settings.ai_context)
 STATIC_DIR = BASE_DIR / "static"
@@ -86,6 +89,21 @@ class BotSettingsRequest(BaseModel):
     model: str = Field(min_length=2, max_length=120)
     system_prompt: str = Field(min_length=1, max_length=8000)
     skills_md: str = Field(default="", max_length=20000)
+
+
+class OffboardingTemplateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    file_name: str = Field(min_length=4, max_length=255)
+    content_base64: str = Field(min_length=1)
+    template_format: str | None = Field(default=None, max_length=10)
+    fields: dict[str, Any] = Field(default_factory=dict)
+    active: bool = True
+
+
+class OffboardingDocumentRequest(BaseModel):
+    user_identifier: str = Field(min_length=2, max_length=255)
+    extra_text: str | None = Field(default=None, max_length=2000)
+    template_id: str | None = Field(default=None, max_length=80)
 
 
 def _require_admin(authorization: str | None = Header(default=None)) -> dict[str, Any]:
@@ -164,6 +182,54 @@ def admin_update_settings(payload: BotSettingsRequest, admin: dict[str, Any] = D
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"settings": data, "available_models": AVAILABLE_MODELS}
+
+
+@app.get("/admin/api/offboarding-templates")
+def admin_list_offboarding_templates(admin: dict[str, Any] = Depends(_require_admin)) -> dict[str, Any]:
+    return {"templates": template_store.list_templates()}
+
+
+@app.post("/admin/api/offboarding-templates")
+def admin_add_offboarding_template(
+    payload: OffboardingTemplateRequest,
+    admin: dict[str, Any] = Depends(_require_admin),
+) -> dict[str, Any]:
+    try:
+        template = template_store.add_template(
+            name=payload.name,
+            file_name=payload.file_name,
+            content_base64=payload.content_base64,
+            template_format=payload.template_format,
+            fields=payload.fields,
+            active=payload.active,
+        )
+        return {"template": template, "templates": template_store.list_templates()}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/admin/api/offboarding-templates/{template_id}/active")
+def admin_activate_offboarding_template(
+    template_id: str,
+    admin: dict[str, Any] = Depends(_require_admin),
+) -> dict[str, Any]:
+    try:
+        template = template_store.set_active(template_id)
+        return {"template": template, "templates": template_store.list_templates()}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.delete("/admin/api/offboarding-templates/{template_id}")
+def admin_delete_offboarding_template(
+    template_id: str,
+    admin: dict[str, Any] = Depends(_require_admin),
+) -> dict[str, Any]:
+    try:
+        template_store.delete(template_id)
+        return {"templates": template_store.list_templates()}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 def _search_logic(query: str, max_results: int) -> SearchTicketsResponse:
@@ -378,6 +444,154 @@ def _assets_for_user(nl_query: str, max_results: int, only_hw: bool) -> tuple[di
         matched = [a for a in matched if _is_hw_like(a)]
 
     return matched_user, matched[:max_results]
+
+
+def _stringify_asset_value(value: Any) -> str:
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value if v is not None)
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _asset_attr_value(asset: dict[str, Any], names: list[str]) -> str:
+    attrs = asset.get("attributes") or {}
+    normalized_names = {_normalize_lookup_text(name) for name in names}
+    for key, value in attrs.items():
+        if _normalize_lookup_text(str(key)) in normalized_names:
+            return _stringify_asset_value(value)
+    for key, value in attrs.items():
+        key_norm = _normalize_lookup_text(str(key))
+        if any(name in key_norm for name in normalized_names):
+            return _stringify_asset_value(value)
+    return ""
+
+
+def _format_device_name(asset: dict[str, Any]) -> str:
+    label = str(asset.get("label") or "").strip()
+    object_key = str(asset.get("objectKey") or "").strip()
+    object_type = str(asset.get("objectType") or "").strip()
+    parts = [p for p in [label, object_key] if p]
+    text = " - ".join(parts) if parts else "Nezname zariadenie"
+    if object_type:
+        text = f"{text} ({object_type})"
+    return text
+
+
+def _extract_extra_text(text: str) -> str:
+    match = re.search(
+        r"(?:doplnujuci\s+text|doplňujúci\s+text|poznamka|poznámka|text)\s*[:=-]\s*(.+)$",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return match.group(1).strip() if match else ""
+
+
+def _extract_offboarding_person(text: str, parsed: dict[str, Any] | None = None) -> str | None:
+    email = re.search(r"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", text)
+    if email:
+        return email.group(1)
+    parsed_query = (parsed or {}).get("query")
+    if isinstance(parsed_query, str) and parsed_query.strip():
+        return parsed_query.strip()
+    cleaned = re.sub(
+        r"(?:doplnujuci\s+text|doplňujúci\s+text|poznamka|poznámka|text)\s*[:=-].+$",
+        "",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    cleaned = re.sub(
+        r"\b(?:offboardingovat|offboardovat|offboarding|offboard|ofboarding|ofbord|offbord|offbordnigovat|ofbordnigovat|offbordnig|offboardni|offboarduj|ukoncenie|ukončenie|odovzdavaci|odovzdávací|protokol|vratenie|vrátenie|zariadenia|zariadeni|zamestnanca|pouzivatela|používateľa|pre|for)\b",
+        " ",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,:;!?()[]{}\"'")
+    if not cleaned or _normalize_lookup_text(cleaned) in {"niekoho", "someone"}:
+        return None
+    return cleaned if len(cleaned) >= 2 else None
+
+
+def _build_offboarding_document_context(user_identifier: str, extra_text: str | None) -> dict[str, Any]:
+    matched_user = _resolve_user_for_assets(user_identifier)
+    assets: list[dict[str, Any]] = []
+    if _assets_enabled():
+        try:
+            asset_user, user_assets = _assets_for_user(
+                (matched_user or {}).get("displayName") or user_identifier,
+                max_results=25,
+                only_hw=True,
+            )
+            if asset_user:
+                matched_user = asset_user
+            assets = user_assets
+        except Exception:
+            assets = []
+
+    employee_name = str((matched_user or {}).get("displayName") or user_identifier).strip()
+    employee_email = str((matched_user or {}).get("emailAddress") or "").strip()
+    device_lines = [_format_device_name(asset) for asset in assets]
+    serial_lines = []
+    for asset in assets:
+        serial = _asset_attr_value(
+            asset,
+            [
+                "Serial Number",
+                "Serial",
+                "Serial number",
+                "S/N",
+                "SN",
+                "Seriove cislo",
+                "Sériové číslo",
+                "Seriove c.",
+            ],
+        )
+        serial_lines.append(serial or f"{asset.get('objectKey') or asset.get('label')}: bez serioveho cisla")
+
+    values = {
+        "employee_name": employee_name,
+        "device_name": "\n".join(device_lines) if device_lines else "Bez priradeneho HW assetu",
+        "serial_number": "\n".join(serial_lines) if serial_lines else "Bez serioveho cisla",
+        "extra_text": (extra_text or "").strip(),
+    }
+    return {
+        "user": {
+            "display_name": employee_name,
+            "email": employee_email,
+            "account_id": (matched_user or {}).get("accountId"),
+        },
+        "assets": assets,
+        "values": values,
+    }
+
+
+def _generate_offboarding_document(
+    *,
+    user_identifier: str,
+    extra_text: str | None = None,
+    template_id: str | None = None,
+) -> dict[str, Any]:
+    context = _build_offboarding_document_context(user_identifier, extra_text)
+    template = template_store.get(template_id) if template_id else template_store.active()
+    if template_id and not template:
+        raise HTTPException(status_code=404, detail="Offboarding template not found.")
+    safe_user = re.sub(r"[^a-zA-Z0-9_-]+", "-", context["values"]["employee_name"]).strip("-") or "user"
+    file_stem = f"offboarding-{safe_user}-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+    result = render_offboarding_document(
+        template_store=template_store,
+        template=template,
+        output_dir=STATIC_DIR / "offboarding",
+        values=context["values"],
+        file_stem=file_stem,
+    )
+    document_url = f"/static/offboarding/{result['file_name']}"
+    return {
+        "document_url": document_url,
+        "file_name": result["file_name"],
+        "format": result["format"],
+        "template": {"id": template.get("id"), "name": template.get("name")} if template else None,
+        **context,
+    }
 
 
 def _extract_issue_key_from_history(history: list[dict[str, str]] | None) -> str | None:
@@ -748,6 +962,20 @@ def offboarding_checklist(payload: OffboardingChecklistRequest) -> OffboardingCh
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.post("/offboarding/document")
+def offboarding_document(payload: OffboardingDocumentRequest) -> dict[str, Any]:
+    try:
+        return _generate_offboarding_document(
+            user_identifier=payload.user_identifier,
+            extra_text=payload.extra_text,
+            template_id=payload.template_id,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/assets/print-protocol", response_model=AssetsPrintProtocolResponse)
 def assets_print_protocol(payload: AssetsPrintProtocolRequest) -> AssetsPrintProtocolResponse:
     try:
@@ -885,6 +1113,16 @@ def chat(payload: ChatRequest) -> ChatResponse:
         create_hint = bool(re.search(r"\b(vytvor|sprav|vyrob|create|make)\b", lower_message)) and "ticket" in lower_message
         search_hint = bool(re.search(r"\b(najdi|hladaj|search|find|list|vypis)\b", lower_message))
         summarize_hint = bool(re.search(r"\b(summary|summar|zhrn|sumariz|sprav summary)\b", lower_message))
+        offboarding_doc_hint = bool(
+            re.search(
+                r"\b(offboarding|offboard|offboardovat|ofboarding|ofbord|offbord|offbordnig|offbordnigovat|ofbordnigovat|ukoncenie|ukončenie)\b",
+                lower_message,
+            )
+            or (
+                re.search(r"\b(odovzdavaci|odovzdávací|vratenie|vrátenie)\b", lower_message)
+                and re.search(r"\b(zariaden|pc|laptop|notebook|hardware)\b", lower_message)
+            )
+        )
         help_hint = bool(re.search(r"\b(help|pomoc|co vies|co dokazes|what can you do|capabilities)\b", lower_message))
         greeting_hint = bool(re.search(r"\b(ahoj|cau|čau|halo|hello|hi|hey)\b", lower_message.strip()))
         thanks_hint = bool(re.search(r"\b(dakujem|ďakujem|thanks|thank you|thx)\b", lower_message))
@@ -919,6 +1157,8 @@ def chat(payload: ChatRequest) -> ChatResponse:
             action = "list_users"
         elif list_tickets_hint:
             action = "list_tickets"
+        elif offboarding_doc_hint:
+            action = "offboarding"
         elif greeting_hint or thanks_hint:
             action = "chat"
         elif create_hint and not search_hint and not summarize_hint:
@@ -1149,19 +1389,21 @@ def chat(payload: ChatRequest) -> ChatResponse:
             )
 
         if action == "offboarding":
-            m = re.search(r"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", payload.message)
-            user_identifier = m.group(1) if m else (parsed.get("query") or payload.message[:120])
-            checklist = offboarding_checklist(
-                OffboardingChecklistRequest(
-                    user_identifier=user_identifier,
-                    lookback_days=365,
-                    max_results=100,
+            user_identifier = _extract_offboarding_person(payload.message, parsed)
+            if not user_identifier:
+                return ChatResponse(
+                    action="offboarding",
+                    message="Jasne. Napis prosim meno alebo email cloveka, napriklad: offboarding Imrich Koch.",
+                    data=None,
                 )
+            generated = _generate_offboarding_document(
+                user_identifier=user_identifier,
+                extra_text=_extract_extra_text(payload.message),
             )
             return ChatResponse(
                 action="offboarding",
-                message=f"Offboarding checklist ready for {user_identifier}",
-                data=checklist.model_dump(),
+                message=f"Offboarding dokument je pripraveny pre {generated['user']['display_name']}.",
+                data=generated,
             )
 
         if action == "assets_print":

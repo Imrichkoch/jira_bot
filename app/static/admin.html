@@ -128,8 +128,59 @@
       padding: 10px;
       background: #fafbfc;
     }
+    .template-item {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fafbfc;
+      display: grid;
+      gap: 8px;
+    }
+    .template-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .field-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(130px, 1fr));
+      gap: 10px;
+    }
+    .field-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      background: #fff;
+    }
+    .field-card input { margin-bottom: 8px; }
+    .pdf-preview-wrap {
+      position: relative;
+      width: 100%;
+      height: 360px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fff;
+      margin-top: 12px;
+    }
+    .pdf-preview-wrap embed {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    .pdf-click-layer {
+      position: absolute;
+      inset: 0;
+      cursor: crosshair;
+      background: transparent;
+    }
+    .templates {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
     @media (max-width: 760px) {
-      .grid, .row { grid-template-columns: 1fr; display: grid; }
+      .grid, .row, .field-grid { grid-template-columns: 1fr; display: grid; }
       .top { align-items: flex-start; flex-direction: column; }
     }
   </style>
@@ -212,12 +263,98 @@
         <div id="adminStatus" class="status"></div>
         <div id="adminsList" class="admins"></div>
       </section>
+
+      <section class="panel">
+        <h2>Offboarding sablony</h2>
+        <div class="muted">
+          DOCX sablona pouziva placeholdery typu <code>{{employee_name}}</code>.
+          PDF sablona pouziva pozicie v percentach od laveho horneho rohu.
+        </div>
+
+        <div class="row" style="margin-top: 14px;">
+          <div>
+            <label for="templateName">Nazov sablony</label>
+            <input id="templateName" placeholder="Odovzdanie notebooku" />
+          </div>
+          <div>
+            <label for="templateFormat">Format</label>
+            <select id="templateFormat">
+              <option value="docx">Word / DOCX</option>
+              <option value="pdf">PDF</option>
+            </select>
+          </div>
+          <div>
+            <label for="templateFile">Subor</label>
+            <input id="templateFile" type="file" accept=".docx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+          </div>
+          <button id="uploadTemplateButton" type="button">Pridat sablonu</button>
+        </div>
+
+        <div style="margin-top: 14px;">
+          <label>Polia v dokumente</label>
+          <div class="field-grid">
+            <div class="field-card" data-field="employee_name">
+              <label>Meno</label>
+              <input id="field_employee_name_placeholder" value="{{employee_name}}" />
+              <input id="field_employee_name_page" value="1" />
+              <input id="field_employee_name_x" value="12" />
+              <input id="field_employee_name_y" value="24" />
+              <input id="field_employee_name_size" value="11" />
+            </div>
+            <div class="field-card" data-field="device_name">
+              <label>PC / zariadenie</label>
+              <input id="field_device_name_placeholder" value="{{device_name}}" />
+              <input id="field_device_name_page" value="1" />
+              <input id="field_device_name_x" value="12" />
+              <input id="field_device_name_y" value="34" />
+              <input id="field_device_name_size" value="11" />
+            </div>
+            <div class="field-card" data-field="serial_number">
+              <label>Seriove cislo</label>
+              <input id="field_serial_number_placeholder" value="{{serial_number}}" />
+              <input id="field_serial_number_page" value="1" />
+              <input id="field_serial_number_x" value="12" />
+              <input id="field_serial_number_y" value="44" />
+              <input id="field_serial_number_size" value="11" />
+            </div>
+            <div class="field-card" data-field="extra_text">
+              <label>Doplnujuci text</label>
+              <input id="field_extra_text_placeholder" value="{{extra_text}}" />
+              <input id="field_extra_text_page" value="1" />
+              <input id="field_extra_text_x" value="12" />
+              <input id="field_extra_text_y" value="54" />
+              <input id="field_extra_text_size" value="11" />
+            </div>
+          </div>
+          <div class="muted" style="margin-top: 8px;">
+            Poradie inputov v kazdej karte: DOCX placeholder, PDF strana, PDF X %, PDF Y %, velkost pisma.
+          </div>
+        </div>
+
+        <div style="margin-top: 14px;">
+          <label for="pdfClickField">PDF click-to-place</label>
+          <select id="pdfClickField">
+            <option value="employee_name">Meno</option>
+            <option value="device_name">PC / zariadenie</option>
+            <option value="serial_number">Seriove cislo</option>
+            <option value="extra_text">Doplnujuci text</option>
+          </select>
+          <div id="pdfPreviewWrap" class="pdf-preview-wrap hidden">
+            <embed id="pdfPreview" type="application/pdf" />
+            <div id="pdfClickLayer" class="pdf-click-layer"></div>
+          </div>
+        </div>
+
+        <div id="templateStatus" class="status"></div>
+        <div id="templatesList" class="templates"></div>
+      </section>
     </section>
   </main>
 
   <script>
     const tokenKey = "jiraBotAdminToken";
     const $ = (id) => document.getElementById(id);
+    const templateFields = ["employee_name", "device_name", "serial_number", "extra_text"];
 
     function token() {
       return localStorage.getItem(tokenKey) || "";
@@ -247,7 +384,7 @@
       const me = await api("/admin/api/me");
       $("currentAdmin").textContent = `Prihlaseny: ${me.admin.display_name || me.admin.username}`;
       showLoggedIn(true);
-      await Promise.all([loadSettings(), loadAdmins()]);
+      await Promise.all([loadSettings(), loadAdmins(), loadTemplates()]);
     }
 
     async function loadSettings() {
@@ -271,6 +408,66 @@
         item.className = "admin-item";
         item.innerHTML = `<strong>${admin.username}</strong><span class="muted">${admin.display_name || ""}</span>`;
         $("adminsList").appendChild(item);
+      }
+    }
+
+    function collectTemplateFields() {
+      const fields = {};
+      for (const key of templateFields) {
+        fields[key] = {
+          placeholder: $(`field_${key}_placeholder`).value || `{{${key}}}`,
+          page: Number($(`field_${key}_page`).value || 1),
+          x_pct: Number($(`field_${key}_x`).value || 0),
+          y_pct: Number($(`field_${key}_y`).value || 0),
+          font_size: Number($(`field_${key}_size`).value || 11),
+        };
+      }
+      return fields;
+    }
+
+    function fileToBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(reader.error || new Error("File read failed"));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function loadTemplates() {
+      const data = await api("/admin/api/offboarding-templates");
+      $("templatesList").innerHTML = "";
+      for (const template of data.templates || []) {
+        const item = document.createElement("div");
+        item.className = "template-item";
+        const active = template.active ? "Aktivna" : "Neaktivna";
+        item.innerHTML = `
+          <div><strong>${template.name}</strong> <span class="muted">(${template.template_format}, ${active})</span></div>
+          <div class="muted">${template.file_name || ""}</div>
+          <div class="template-actions"></div>
+        `;
+        const actions = item.querySelector(".template-actions");
+        const activate = document.createElement("button");
+        activate.type = "button";
+        activate.className = "secondary";
+        activate.textContent = "Nastavit ako aktivnu";
+        activate.disabled = Boolean(template.active);
+        activate.addEventListener("click", async () => {
+          await api(`/admin/api/offboarding-templates/${template.id}/active`, { method: "PUT" });
+          await loadTemplates();
+        });
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "secondary";
+        remove.textContent = "Zmazat";
+        remove.addEventListener("click", async () => {
+          if (!confirm(`Zmazat sablonu ${template.name}?`)) return;
+          await api(`/admin/api/offboarding-templates/${template.id}`, { method: "DELETE" });
+          await loadTemplates();
+        });
+        actions.appendChild(activate);
+        actions.appendChild(remove);
+        $("templatesList").appendChild(item);
       }
     }
 
@@ -327,6 +524,63 @@
         await loadAdmins();
       } catch (err) {
         setStatus("adminStatus", err.message, true);
+      }
+    });
+
+    $("templateFile").addEventListener("change", () => {
+      const file = $("templateFile").files[0];
+      if (!file) return;
+      const ext = file.name.toLowerCase().endsWith(".pdf") ? "pdf" : "docx";
+      $("templateFormat").value = ext;
+      if (!$("templateName").value.trim()) {
+        $("templateName").value = file.name.replace(/\.[^.]+$/, "");
+      }
+      if (ext === "pdf") {
+        $("pdfPreview").src = URL.createObjectURL(file);
+        $("pdfPreviewWrap").classList.remove("hidden");
+      } else {
+        $("pdfPreviewWrap").classList.add("hidden");
+      }
+    });
+
+    $("templateFormat").addEventListener("change", () => {
+      $("pdfPreviewWrap").classList.toggle("hidden", $("templateFormat").value !== "pdf");
+    });
+
+    $("pdfClickLayer").addEventListener("click", (event) => {
+      const rect = $("pdfClickLayer").getBoundingClientRect();
+      const xPct = ((event.clientX - rect.left) / rect.width) * 100;
+      const yPct = ((event.clientY - rect.top) / rect.height) * 100;
+      const field = $("pdfClickField").value;
+      $(`field_${field}_x`).value = xPct.toFixed(1);
+      $(`field_${field}_y`).value = yPct.toFixed(1);
+      setStatus("templateStatus", `Pozicia pre ${field}: X ${xPct.toFixed(1)} %, Y ${yPct.toFixed(1)} %`);
+    });
+
+    $("uploadTemplateButton").addEventListener("click", async () => {
+      try {
+        const file = $("templateFile").files[0];
+        if (!file) throw new Error("Vyber DOCX alebo PDF subor.");
+        setStatus("templateStatus", "Nahravam sablonu...");
+        const content = await fileToBase64(file);
+        await api("/admin/api/offboarding-templates", {
+          method: "POST",
+          body: JSON.stringify({
+            name: $("templateName").value || file.name,
+            file_name: file.name,
+            template_format: $("templateFormat").value,
+            content_base64: content,
+            fields: collectTemplateFields(),
+            active: true,
+          }),
+        });
+        $("templateFile").value = "";
+        $("templateName").value = "";
+        $("pdfPreviewWrap").classList.add("hidden");
+        setStatus("templateStatus", "Sablona je ulozena a nastavena ako aktivna.");
+        await loadTemplates();
+      } catch (err) {
+        setStatus("templateStatus", err.message, true);
       }
     });
 

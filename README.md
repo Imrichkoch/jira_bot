@@ -192,6 +192,20 @@ Priklad:
 }
 ```
 
+### Offboarding document from template
+
+`POST /offboarding/document`
+
+Priklad:
+```json
+{
+  "user_identifier": "imrich koch",
+  "extra_text": "Vratit notebook, nabijacku a dokovaciu stanicu."
+}
+```
+
+Vrati URL na vygenerovany subor v `/static/offboarding/...`. Ak je v admin rozhrani aktivna DOCX/PDF sablona, pouzije ju. Ak sablona nie je nastavena, vytvori jednoduchy PDF dokument.
+
 ### Print protocol in Jira Assets (odovzdavaci protokol)
 
 `POST /assets/print-protocol`
@@ -215,6 +229,8 @@ Admin vie:
 - vybrat AI model pre dalsie odpovede bota
 - menit system prompt
 - menit `skills.md`, ktory sa priklada k AI instrukciam
+- pridavat offboarding sablony vo formate DOCX/PDF
+- nastavit DOCX placeholdery a PDF pozicie pre meno, PC, seriove cislo a doplnujuci text
 
 Prvy admin sa da bootstrapnut cez env premenne:
 - `ADMIN_BOOTSTRAP_USERNAME`
@@ -226,6 +242,7 @@ Runtime data sa ukladaju do `data/` alebo do cesty z `APP_DATA_DIR`:
 - `admin.sqlite3` obsahuje admin ucty, zahashovane hesla a session tokeny
 - `bot_settings.json` obsahuje aktualny model a system prompt
 - `skills.md` obsahuje editable instrukcie/schopnosti bota
+- `offboarding_templates/` obsahuje metadata a nahrate offboarding sablony
 
 `data/` je v `.gitignore`, aby sa do GitHubu nedostali hesla, tokeny, session ani produkcne nastavenia.
 

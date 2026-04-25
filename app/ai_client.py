@@ -123,7 +123,7 @@ class AIClient:
             "6) If user asks which job/file mapping in Assets -> action=assets_job_file.\n"
             "7) If user asks DORA relevance from Assets -> action=assets_dora.\n"
             "8) If user asks SLA/business impact from Assets -> action=assets_sla.\n"
-            "9) If user asks end-of-contract access list/checklist -> action=offboarding.\n"
+            "9) If user asks to offboard someone, end-of-contract, or prepare handover/return document -> action=offboarding.\n"
             "10) If user asks print protocol for Assets object -> action=assets_print.\n"
             "11) If user asks what assistant can do or generic help -> action=help.\n"
             "12) For general conversation/small talk not requiring tool action -> action=chat.\n"
@@ -138,7 +138,7 @@ class AIClient:
         instructions = (
             "You are a friendly Jira assistant talking to the user in Slovak.\n"
             "Be concise, natural, and helpful.\n"
-            "You can work with Jira tickets (create/search/summarize/assign/list users/list tickets/offboarding).\n"
+            "You can work with Jira tickets (create/search/summarize/assign/list users/list tickets/offboarding documents).\n"
             f"Assets features currently {'enabled' if assets_enabled else 'disabled'}.\n"
             "If user asks about unavailable Assets features, explain briefly they are currently unavailable."
         )

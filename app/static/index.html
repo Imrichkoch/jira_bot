@@ -106,6 +106,17 @@
       cursor: pointer;
     }
     button:disabled { opacity: .6; cursor: wait; }
+    .download-link {
+      display: inline-flex;
+      width: fit-content;
+      margin-top: 10px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #061120;
+      font-weight: 700;
+      text-decoration: none;
+    }
   </style>
 </head>
 <body>
@@ -131,12 +142,34 @@
     let pendingAction = null;
     const conversation = [];
 
-    function addBubble(text, role) {
+    function addBubble(text, role, links = []) {
       const el = document.createElement("div");
       el.className = `bubble ${role}`;
-      el.textContent = text;
+      const body = document.createElement("div");
+      body.textContent = text;
+      el.appendChild(body);
+      for (const link of links) {
+        const a = document.createElement("a");
+        a.className = "download-link";
+        a.href = link.href;
+        a.target = "_blank";
+        a.rel = "noopener";
+        a.textContent = link.label;
+        el.appendChild(a);
+      }
       chatEl.appendChild(el);
       chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    function responseLinks(data) {
+      const links = [];
+      if (data.data?.document_url) {
+        links.push({ href: data.data.document_url, label: `Stiahnut ${data.data.file_name || "dokument"}` });
+      }
+      if (data.data?.protocol_url) {
+        links.push({ href: data.data.protocol_url, label: "Stiahnut protokol" });
+      }
+      return links;
     }
 
     function addToConversation(role, content) {
@@ -157,6 +190,15 @@
         if (data.data?.protocol_url) {
           lines.push(`\nSubor: ${data.data.protocol_url}`);
         }
+        return lines.join("\n");
+      }
+
+      if (data.action === "offboarding" && data.data?.document_url) {
+        const lines = [data.message || "Offboarding dokument je pripraveny."];
+        if (data.data?.template?.name) lines.push(`Sablona: ${data.data.template.name}`);
+        if (data.data?.format) lines.push(`Format: ${data.data.format}`);
+        if (Array.isArray(data.data?.assets)) lines.push(`Zariadenia: ${data.data.assets.length}`);
+        lines.push(`Subor: ${data.data.document_url}`);
         return lines.join("\n");
       }
 
@@ -246,7 +288,7 @@
         } else {
           captureContextIssue(data);
           const normalized = normalizeResponse(data);
-          addBubble(normalized, "bot");
+          addBubble(normalized, "bot", responseLinks(data));
           addToConversation("assistant", normalized);
         }
       } catch (err) {
