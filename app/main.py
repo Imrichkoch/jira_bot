@@ -220,6 +220,19 @@ def admin_activate_offboarding_template(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@app.put("/admin/api/offboarding-templates/{template_id}/fields")
+def admin_update_offboarding_template_fields(
+    template_id: str,
+    fields: dict[str, Any],
+    admin: dict[str, Any] = Depends(_require_admin),
+) -> dict[str, Any]:
+    try:
+        template = template_store.update_fields(template_id, fields)
+        return {"template": template, "templates": template_store.list_templates()}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.delete("/admin/api/offboarding-templates/{template_id}")
 def admin_delete_offboarding_template(
     template_id: str,

@@ -156,12 +156,23 @@
     .pdf-preview-wrap {
       position: relative;
       width: 100%;
-      height: 360px;
+      max-height: 620px;
       border: 1px solid var(--border);
       border-radius: 8px;
-      overflow: hidden;
-      background: #fff;
+      overflow: auto;
+      background: #2b2f36;
       margin-top: 12px;
+      padding: 18px;
+    }
+    .pdf-page {
+      display: block;
+      margin: 0 auto 18px;
+      background: #fff;
+      box-shadow: 0 8px 24px rgba(9, 30, 66, 0.35);
+      cursor: default;
+    }
+    .pdf-preview-wrap.placing .pdf-page {
+      cursor: crosshair;
     }
     .pdf-preview-wrap embed {
       width: 100%;
@@ -369,11 +380,14 @@
     </section>
   </main>
 
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
   <script>
     const tokenKey = "jiraBotAdminToken";
     const $ = (id) => document.getElementById(id);
     const templateFields = ["employee_name", "device_name", "serial_number", "extra_text"];
     let pdfPlacing = false;
+    let activeTemplateId = null;
+    let selectedPdfFile = null;
 
     function token() {
       return localStorage.getItem(tokenKey) || "";
@@ -403,6 +417,63 @@
       pdfPlacing = active;
       $("pdfPreviewWrap").classList.toggle("placing", active);
       $("togglePdfPlaceButton").textContent = active ? "Vypnut oznacenie pozicie" : "Zapnut oznacenie pozicie";
+    }
+
+    function applyTemplateFields(fields = {}) {
+      for (const key of templateFields) {
+        const cfg = fields[key] || {};
+        $(`field_${key}_placeholder`).value = cfg.placeholder || `{{${key}}}`;
+        $(`field_${key}_page`).value = cfg.page || 1;
+        $(`field_${key}_x`).value = cfg.x_pct ?? 12;
+        $(`field_${key}_y`).value = cfg.y_pct ?? 24;
+        $(`field_${key}_size`).value = cfg.font_size || 11;
+      }
+    }
+
+    async function renderPdfPreview(file) {
+      if (!window.pdfjsLib) {
+        setStatus("templateStatus", "PDF nahlad sa nepodarilo nacitat. Skus obnovit stranku.", true);
+        return;
+      }
+      pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+      const wrap = $("pdfPreviewWrap");
+      wrap.innerHTML = "";
+      wrap.classList.remove("hidden");
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+      for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+        const page = await pdf.getPage(pageNumber);
+        const baseViewport = page.getViewport({ scale: 1 });
+        const availableWidth = Math.max(320, wrap.clientWidth - 54);
+        const scale = Math.min(1.35, availableWidth / baseViewport.width);
+        const viewport = page.getViewport({ scale });
+        const canvas = document.createElement("canvas");
+        canvas.className = "pdf-page";
+        canvas.dataset.page = String(pageNumber);
+        canvas.width = Math.floor(viewport.width);
+        canvas.height = Math.floor(viewport.height);
+        canvas.style.width = `${Math.floor(viewport.width)}px`;
+        canvas.style.height = `${Math.floor(viewport.height)}px`;
+        wrap.appendChild(canvas);
+        await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+        canvas.addEventListener("click", handlePdfPageClick);
+      }
+    }
+
+    function handlePdfPageClick(event) {
+      if (!pdfPlacing) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const canvas = event.currentTarget;
+      const rect = canvas.getBoundingClientRect();
+      const xPct = ((event.clientX - rect.left) / rect.width) * 100;
+      const yPct = ((event.clientY - rect.top) / rect.height) * 100;
+      const field = $("pdfClickField").value;
+      $(`field_${field}_page`).value = canvas.dataset.page || "1";
+      $(`field_${field}_x`).value = xPct.toFixed(1);
+      $(`field_${field}_y`).value = yPct.toFixed(1);
+      setPdfPlacing(false);
+      setStatus("templateStatus", `Pozicia pre ${field}: strana ${canvas.dataset.page}, X ${xPct.toFixed(1)} %, Y ${yPct.toFixed(1)} %`);
     }
 
     async function loadAll() {
@@ -462,7 +533,12 @@
     async function loadTemplates() {
       const data = await api("/admin/api/offboarding-templates");
       $("templatesList").innerHTML = "";
+      let activeTemplate = null;
       for (const template of data.templates || []) {
+        if (template.active) {
+          activeTemplateId = template.id;
+          activeTemplate = template;
+        }
         const item = document.createElement("div");
         item.className = "template-item";
         const active = template.active ? "Aktivna" : "Neaktivna";
@@ -481,6 +557,28 @@
           await api(`/admin/api/offboarding-templates/${template.id}/active`, { method: "PUT" });
           await loadTemplates();
         });
+        const loadFields = document.createElement("button");
+        loadFields.type = "button";
+        loadFields.className = "secondary";
+        loadFields.textContent = "Nacitat pozicie";
+        loadFields.addEventListener("click", () => {
+          activeTemplateId = template.id;
+          applyTemplateFields(template.fields || {});
+          setStatus("templateStatus", `Pozicie zo sablony ${template.name} su nacitane do formulara.`);
+        });
+        const saveFields = document.createElement("button");
+        saveFields.type = "button";
+        saveFields.className = "secondary";
+        saveFields.textContent = "Ulozit pozicie";
+        saveFields.addEventListener("click", async () => {
+          await api(`/admin/api/offboarding-templates/${template.id}/fields`, {
+            method: "PUT",
+            body: JSON.stringify(collectTemplateFields()),
+          });
+          activeTemplateId = template.id;
+          setStatus("templateStatus", `Pozicie pre ${template.name} su ulozene.`);
+          await loadTemplates();
+        });
         const remove = document.createElement("button");
         remove.type = "button";
         remove.className = "secondary";
@@ -491,8 +589,13 @@
           await loadTemplates();
         });
         actions.appendChild(activate);
+        actions.appendChild(loadFields);
+        actions.appendChild(saveFields);
         actions.appendChild(remove);
         $("templatesList").appendChild(item);
+      }
+      if (activeTemplate) {
+        applyTemplateFields(activeTemplate.fields || {});
       }
     }
 
@@ -552,26 +655,31 @@
       }
     });
 
-    $("templateFile").addEventListener("change", () => {
+    $("templateFile").addEventListener("change", async () => {
       const file = $("templateFile").files[0];
       if (!file) return;
       const ext = file.name.toLowerCase().endsWith(".pdf") ? "pdf" : "docx";
+      selectedPdfFile = ext === "pdf" ? file : null;
       $("templateFormat").value = ext;
       if (!$("templateName").value.trim()) {
         $("templateName").value = file.name.replace(/\.[^.]+$/, "");
       }
       if (ext === "pdf") {
-        $("pdfPreview").src = URL.createObjectURL(file);
-        $("pdfPreviewWrap").classList.remove("hidden");
+        await renderPdfPreview(file);
         setPdfPlacing(false);
       } else {
+        $("pdfPreviewWrap").innerHTML = "";
         $("pdfPreviewWrap").classList.add("hidden");
         setPdfPlacing(false);
       }
     });
 
     $("templateFormat").addEventListener("change", () => {
-      $("pdfPreviewWrap").classList.toggle("hidden", $("templateFormat").value !== "pdf");
+      if ($("templateFormat").value === "pdf" && selectedPdfFile) {
+        renderPdfPreview(selectedPdfFile).catch((err) => setStatus("templateStatus", err.message, true));
+      } else {
+        $("pdfPreviewWrap").classList.add("hidden");
+      }
       setPdfPlacing(false);
     });
 
@@ -585,20 +693,6 @@
         "templateStatus",
         pdfPlacing ? "Klikni do PDF dokumentu na miesto, kam sa ma vlozit vybrane pole." : ""
       );
-    });
-
-    $("pdfClickLayer").addEventListener("click", (event) => {
-      if (!pdfPlacing) return;
-      event.preventDefault();
-      event.stopPropagation();
-      const rect = $("pdfClickLayer").getBoundingClientRect();
-      const xPct = ((event.clientX - rect.left) / rect.width) * 100;
-      const yPct = ((event.clientY - rect.top) / rect.height) * 100;
-      const field = $("pdfClickField").value;
-      $(`field_${field}_x`).value = xPct.toFixed(1);
-      $(`field_${field}_y`).value = yPct.toFixed(1);
-      setPdfPlacing(false);
-      setStatus("templateStatus", `Pozicia pre ${field}: X ${xPct.toFixed(1)} %, Y ${yPct.toFixed(1)} %`);
     });
 
     $("uploadTemplateButton").addEventListener("click", async () => {
@@ -620,6 +714,8 @@
         });
         $("templateFile").value = "";
         $("templateName").value = "";
+        selectedPdfFile = null;
+        $("pdfPreviewWrap").innerHTML = "";
         $("pdfPreviewWrap").classList.add("hidden");
         setPdfPlacing(false);
         setStatus("templateStatus", "Sablona je ulozena a nastavena ako aktivna.");

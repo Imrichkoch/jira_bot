@@ -168,6 +168,19 @@ class OffboardingTemplateStore:
         self._write(data)
         return selected
 
+    def update_fields(self, template_id: str, fields: dict[str, Any]) -> dict[str, Any]:
+        data = self._read()
+        selected = None
+        for item in data["templates"]:
+            if item.get("id") == template_id:
+                item["fields"] = _merge_fields(fields)
+                selected = item
+                break
+        if not selected:
+            raise ValueError("Template not found.")
+        self._write(data)
+        return selected
+
     def delete(self, template_id: str) -> None:
         data = self._read()
         kept = []
