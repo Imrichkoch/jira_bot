@@ -22,7 +22,7 @@ Vypln `.env`:
 - `JIRA_API_TOKEN` Atlassian API token
 - `JIRA_PROJECT_KEY` napr. `KAN`
 - `OPENAI_API_KEY` tvoj AI API kluc
-- `OPENAI_BASE_URL` nechaj prazdne pre OpenAI, alebo nastav na `https://openrouter.ai/api/v1` pre OpenRouter
+- `OPENAI_BASE_URL` nechaj prazdne pre priame OpenAI volania, alebo nastav na `https://openrouter.ai/api/v1` pre OpenRouter modely
 - `OPENROUTER_SITE_URL` a `OPENROUTER_APP_NAME` su volitelne, ale odporucane pri OpenRouter
 - `ASSETS_WORKSPACE_ID` workspace ID pre Jira Assets (nutne pre Assets endpointy)
 - `APP_DATA_DIR` volitelne miesto pre admin databazu a runtime nastavenia
@@ -226,7 +226,9 @@ Admin UI bezi na:
 
 Admin vie:
 - vytvarat dalsich adminov
-- vybrat AI model pre dalsie odpovede bota
+- vybrat AI model pre dalsie odpovede bota z vacsieho katalogu providerov
+- pouzit OpenAI modely priamo alebo OpenRouter model ID pre Anthropic, Google, DeepSeek, Meta/Llama, Mistral, Qwen, xAI a dalsie
+- pri OpenRouter/custom `OPENAI_BASE_URL` backend pouziva OpenAI-compatible Chat Completions API
 - menit system prompt
 - menit `skills.md`, ktory sa priklada k AI instrukciam
 - pridavat offboarding sablony vo formate DOCX/PDF

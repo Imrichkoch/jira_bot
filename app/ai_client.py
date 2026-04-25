@@ -13,12 +13,14 @@ class AIClient:
     def __init__(self, settings: Settings, runtime_context: Callable[[], dict[str, str]] | None = None) -> None:
         self._model = settings.openai_model
         self._runtime_context = runtime_context
+        self._use_chat_completions = bool(settings.openai_base_url)
         default_headers: dict[str, str] = {}
         if settings.openai_base_url and "openrouter.ai" in settings.openai_base_url:
             if settings.openrouter_site_url:
                 default_headers["HTTP-Referer"] = settings.openrouter_site_url
             if settings.openrouter_app_name:
                 default_headers["X-Title"] = settings.openrouter_app_name
+                default_headers["X-OpenRouter-Title"] = settings.openrouter_app_name
 
         client_kwargs: dict[str, object] = {"api_key": settings.openai_api_key}
         if settings.openai_base_url:
@@ -54,12 +56,20 @@ class AIClient:
 
     def _text_response(self, instructions: str, user_input: str, *, apply_runtime: bool = True) -> str:
         final_instructions = self._runtime_instructions(instructions) if apply_runtime else instructions
+        messages = [
+            {"role": "system", "content": final_instructions},
+            {"role": "user", "content": user_input},
+        ]
+        if self._use_chat_completions:
+            response = self._client.chat.completions.create(
+                model=self._current_model(),
+                messages=messages,
+            )
+            message = response.choices[0].message if response.choices else None
+            return (message.content if message and message.content else "").strip()
         response = self._client.responses.create(
             model=self._current_model(),
-            input=[
-                {"role": "system", "content": final_instructions},
-                {"role": "user", "content": user_input},
-            ],
+            input=messages,
         )
         return response.output_text.strip()
 

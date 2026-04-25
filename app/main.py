@@ -64,14 +64,125 @@ STATIC_DIR = BASE_DIR / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
-AVAILABLE_MODELS = [
-    "gpt-5.4-mini",
-    "gpt-5.4",
-    "gpt-5.3-codex",
-    "gpt-5-mini",
-    "gpt-4.1",
-    "openai/gpt-5.4-mini",
+MODEL_CATALOG = [
+    {
+        "provider": "OpenAI direct",
+        "note": "Direct OpenAI models. Use these when OPENAI_BASE_URL is empty.",
+        "models": [
+            {"id": "gpt-5.4-mini", "label": "GPT-5.4 Mini"},
+            {"id": "gpt-5.4", "label": "GPT-5.4"},
+            {"id": "gpt-5.3-codex", "label": "GPT-5.3 Codex"},
+            {"id": "gpt-5-mini", "label": "GPT-5 Mini"},
+            {"id": "gpt-4.1", "label": "GPT-4.1"},
+            {"id": "o4-mini", "label": "o4-mini"},
+        ],
+    },
+    {
+        "provider": "OpenAI via OpenRouter",
+        "note": "OpenRouter model IDs. Requires OPENAI_BASE_URL=https://openrouter.ai/api/v1.",
+        "models": [
+            {"id": "openai/gpt-5.5-pro", "label": "GPT-5.5 Pro"},
+            {"id": "openai/gpt-5.5", "label": "GPT-5.5"},
+            {"id": "openai/gpt-5.4-mini", "label": "OpenRouter: GPT-5.4 Mini"},
+            {"id": "openai/gpt-5.4", "label": "OpenRouter: GPT-5.4"},
+            {"id": "openai/gpt-5.3-codex", "label": "GPT-5.3 Codex"},
+            {"id": "openai/gpt-5.2-codex", "label": "GPT-5.2 Codex"},
+        ],
+    },
+    {
+        "provider": "Anthropic",
+        "note": "OpenRouter model IDs. Requires OPENAI_BASE_URL=https://openrouter.ai/api/v1.",
+        "models": [
+            {"id": "anthropic/claude-opus-4.7", "label": "Claude Opus 4.7"},
+            {"id": "anthropic/claude-opus-4.6", "label": "Claude Opus 4.6"},
+            {"id": "anthropic/claude-sonnet-4.6", "label": "Claude Sonnet 4.6"},
+            {"id": "anthropic/claude-opus-4.5", "label": "Claude Opus 4.5"},
+            {"id": "anthropic/claude-haiku-4.5", "label": "Claude Haiku 4.5"},
+            {"id": "anthropic/claude-sonnet-4.5", "label": "Claude Sonnet 4.5"},
+            {"id": "anthropic/claude-opus-4.1", "label": "Claude Opus 4.1"},
+            {"id": "anthropic/claude-sonnet-4", "label": "Claude Sonnet 4"},
+            {"id": "anthropic/claude-3.7-sonnet", "label": "Claude 3.7 Sonnet"},
+        ],
+    },
+    {
+        "provider": "Google",
+        "note": "OpenRouter model IDs. Requires OPENAI_BASE_URL=https://openrouter.ai/api/v1.",
+        "models": [
+            {"id": "google/gemini-3.1-pro-preview", "label": "Gemini 3.1 Pro Preview"},
+            {"id": "google/gemini-3.1-flash-lite-preview", "label": "Gemini 3.1 Flash Lite Preview"},
+            {"id": "google/gemini-3-flash-preview", "label": "Gemini 3 Flash Preview"},
+            {"id": "google/gemini-2.0-flash-001", "label": "Gemini 2.0 Flash"},
+            {"id": "google/gemini-2.5-pro", "label": "Gemini 2.5 Pro"},
+            {"id": "google/gemini-2.5-flash", "label": "Gemini 2.5 Flash"},
+        ],
+    },
+    {
+        "provider": "DeepSeek",
+        "note": "OpenRouter model IDs. Requires OPENAI_BASE_URL=https://openrouter.ai/api/v1.",
+        "models": [
+            {"id": "deepseek/deepseek-v4-pro", "label": "DeepSeek V4 Pro"},
+            {"id": "deepseek/deepseek-v4-flash", "label": "DeepSeek V4 Flash"},
+            {"id": "deepseek/deepseek-v3.2", "label": "DeepSeek V3.2"},
+            {"id": "deepseek/deepseek-v3.1-terminus", "label": "DeepSeek V3.1 Terminus"},
+            {"id": "deepseek/deepseek-chat", "label": "DeepSeek Chat"},
+            {"id": "deepseek/deepseek-chat-v3.1", "label": "DeepSeek Chat v3.1"},
+            {"id": "deepseek/deepseek-r1", "label": "DeepSeek R1"},
+            {"id": "deepseek/deepseek-r1-0528", "label": "DeepSeek R1 0528"},
+        ],
+    },
+    {
+        "provider": "Meta / Llama",
+        "note": "OpenRouter model IDs. Requires OPENAI_BASE_URL=https://openrouter.ai/api/v1.",
+        "models": [
+            {"id": "meta-llama/llama-4-maverick", "label": "Llama 4 Maverick"},
+            {"id": "meta-llama/llama-4-scout", "label": "Llama 4 Scout"},
+            {"id": "meta-llama/llama-3.3-70b-instruct", "label": "Llama 3.3 70B Instruct"},
+        ],
+    },
+    {
+        "provider": "Mistral",
+        "note": "OpenRouter model IDs. Requires OPENAI_BASE_URL=https://openrouter.ai/api/v1.",
+        "models": [
+            {"id": "mistralai/mistral-large-2512", "label": "Mistral Large 25.12"},
+            {"id": "mistralai/mistral-large", "label": "Mistral Large"},
+            {"id": "mistralai/mistral-medium-3.1", "label": "Mistral Medium 3.1"},
+            {"id": "mistralai/codestral-2508", "label": "Codestral"},
+            {"id": "mistralai/mixtral-8x22b-instruct", "label": "Mixtral 8x22B"},
+        ],
+    },
+    {
+        "provider": "Qwen",
+        "note": "OpenRouter model IDs. Requires OPENAI_BASE_URL=https://openrouter.ai/api/v1.",
+        "models": [
+            {"id": "qwen/qwen3.6-plus", "label": "Qwen 3.6 Plus"},
+            {"id": "qwen/qwen3-coder-next", "label": "Qwen 3 Coder Next"},
+            {"id": "qwen/qwen3-max-thinking", "label": "Qwen 3 Max Thinking"},
+            {"id": "qwen/qwen-2.5-coder-32b-instruct", "label": "Qwen 2.5 Coder 32B"},
+            {"id": "qwen/qwen-2.5-72b-instruct", "label": "Qwen 2.5 72B"},
+            {"id": "qwen/qwq-32b", "label": "QwQ 32B"},
+        ],
+    },
+    {
+        "provider": "xAI",
+        "note": "OpenRouter model IDs. Requires OPENAI_BASE_URL=https://openrouter.ai/api/v1.",
+        "models": [
+            {"id": "x-ai/grok-4.20", "label": "Grok 4.20"},
+            {"id": "x-ai/grok-4.1-fast", "label": "Grok 4.1 Fast"},
+            {"id": "x-ai/grok-code-fast-1", "label": "Grok Code Fast 1"},
+            {"id": "x-ai/grok-4", "label": "Grok 4"},
+            {"id": "x-ai/grok-3", "label": "Grok 3"},
+            {"id": "x-ai/grok-3-mini", "label": "Grok 3 Mini"},
+        ],
+    },
+    {
+        "provider": "Other",
+        "note": "Manual custom model ID. Use this when a model appears on OpenRouter before it is in this preset list.",
+        "models": [
+            {"id": "custom", "label": "Custom model ID"},
+        ],
+    },
 ]
+AVAILABLE_MODELS = [model["id"] for group in MODEL_CATALOG for model in group["models"] if model["id"] != "custom"]
 
 
 class AdminLoginRequest(BaseModel):
@@ -168,7 +279,7 @@ def admin_create(payload: AdminCreateRequest, admin: dict[str, Any] = Depends(_r
 @app.get("/admin/api/settings")
 def admin_get_settings(admin: dict[str, Any] = Depends(_require_admin)) -> dict[str, Any]:
     data = runtime_settings.get()
-    return {"settings": data, "available_models": AVAILABLE_MODELS}
+    return {"settings": data, "available_models": AVAILABLE_MODELS, "model_catalog": MODEL_CATALOG}
 
 
 @app.put("/admin/api/settings")
@@ -181,7 +292,7 @@ def admin_update_settings(payload: BotSettingsRequest, admin: dict[str, Any] = D
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"settings": data, "available_models": AVAILABLE_MODELS}
+    return {"settings": data, "available_models": AVAILABLE_MODELS, "model_catalog": MODEL_CATALOG}
 
 
 @app.get("/admin/api/offboarding-templates")
