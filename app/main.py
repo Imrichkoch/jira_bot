@@ -673,13 +673,22 @@ def _extract_extra_text(text: str) -> str:
     return match.group(1).strip() if match else ""
 
 
+def _extract_person_after_pre(text: str) -> str | None:
+    match = re.search(
+        r"\b(?:pre|for)\s+([a-zA-Z0-9._%+\-@ ľščťžýáíéúäôňĽŠČŤŽÝÁÍÉÚÄÔŇ]{2,120})$",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    candidate = match.group(1).strip(" .,:;!?()[]{}\"'")
+    return candidate if len(candidate) >= 2 else None
+
+
 def _extract_offboarding_person(text: str, parsed: dict[str, Any] | None = None) -> str | None:
     email = re.search(r"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", text)
     if email:
         return email.group(1)
-    parsed_query = (parsed or {}).get("query")
-    if isinstance(parsed_query, str) and parsed_query.strip():
-        return parsed_query.strip()
     cleaned = re.sub(
         r"(?:doplnujuci\s+text|doplňujúci\s+text|poznamka|poznámka|text)\s*[:=-].+$",
         "",
@@ -697,6 +706,9 @@ def _extract_offboarding_person(text: str, parsed: dict[str, Any] | None = None)
     )
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,:;!?()[]{}\"'")
     if not cleaned or _normalize_lookup_text(cleaned) in {"niekoho", "someone"}:
+        parsed_query = (parsed or {}).get("query")
+        if isinstance(parsed_query, str) and parsed_query.strip():
+            return parsed_query.strip()
         return None
     return cleaned if len(cleaned) >= 2 else None
 
@@ -1796,6 +1808,12 @@ def chat(payload: ChatRequest) -> ChatResponse:
             re.search(r"\b(onboarding|nastup|novy\s+zamestnanec|novému|novemu|dostane|odovzdavaci|odovzdávací)\b", lower_message)
             and re.search(r"\b(protokol|zariaden|pc|pocitac|počítač|laptop|notebook|hardware)\b", lower_message)
         )
+        protocol_for_person_hint = bool(
+            re.search(r"\b(protokol|pdf|dokument|vytlac|vytla?|tlac|tla?|print)\b", lower_message)
+            and _extract_person_after_pre(payload.message)
+            and not _extract_issue_key(payload.message)
+        )
+        asset_key_print_hint = bool(re.search(r"\b[A-Z]{2,10}-\d+\b", payload.message.upper()))
         help_hint = bool(re.search(r"\b(help|pomoc|co vies|co dokazes|what can you do|capabilities)\b", lower_message))
         greeting_hint = bool(re.search(r"\b(ahoj|cau|čau|halo|hello|hi|hey)\b", lower_message.strip()))
         thanks_hint = bool(re.search(r"\b(dakujem|ďakujem|thanks|thank you|thx)\b", lower_message))
@@ -1830,6 +1848,8 @@ def chat(payload: ChatRequest) -> ChatResponse:
             action = "list_users"
         elif list_tickets_hint:
             action = "list_tickets"
+        elif protocol_for_person_hint:
+            action = "offboarding"
         elif onboarding_doc_hint:
             action = "onboarding"
         elif offboarding_doc_hint:
@@ -1846,6 +1866,8 @@ def chat(payload: ChatRequest) -> ChatResponse:
             action = "help"
         elif hw_person_hint:
             action = "assets_hw"
+        elif action == "assets_print" and not asset_key_print_hint and _extract_person_after_pre(payload.message):
+            action = "offboarding"
         elif assets_hint and action in {"search", ""}:
             action = "assets_search"
 
