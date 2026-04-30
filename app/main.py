@@ -705,10 +705,8 @@ def _extract_offboarding_person(text: str, parsed: dict[str, Any] | None = None)
         flags=re.IGNORECASE,
     )
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,:;!?()[]{}\"'")
-    if not cleaned or _normalize_lookup_text(cleaned) in {"niekoho", "someone"}:
-        parsed_query = (parsed or {}).get("query")
-        if isinstance(parsed_query, str) and parsed_query.strip():
-            return parsed_query.strip()
+    filler_words = {"niekoho", "someone", "tak", "ok", "ano", "áno", "jasne", "dobre", "prosim", "prosím"}
+    if not cleaned or _normalize_lookup_text(cleaned) in filler_words:
         return None
     return cleaned if len(cleaned) >= 2 else None
 
@@ -930,11 +928,11 @@ def _format_asset_choices(assets: list[dict[str, Any]]) -> str:
 
 
 def _offboarding_selection_prompt(user: dict[str, Any], assets: list[dict[str, Any]]) -> ChatResponse:
-    display_name = user.get("displayName") or user.get("display_name") or "pouzivatel"
+    display_name = user.get("displayName") or user.get("display_name") or "používateľ"
     message = (
-        f"Nasiel som tieto zariadenia pre {display_name}. Ktore sa odovzdava?\n"
+        f"Našiel som tieto zariadenia pre {display_name}. Ktoré sa vracia firme?\n"
         f"{_format_asset_choices(assets)}\n\n"
-        "Odpovedz cislom, Assets klucom (napr. CDX-4), nazvom zariadenia alebo napis \"vsetky\"."
+        "Odpovedz číslom, Assets kľúčom (napr. CDX-4), názvom zariadenia alebo napíš \"všetky\"."
     )
     return ChatResponse(
         action="offboarding_select_asset",
@@ -1018,20 +1016,20 @@ def _onboarding_selection_prompt(
     only_available: bool = True,
 ) -> ChatResponse:
     who = f" pre {recipient}" if recipient else ""
-    availability_text = "volne zariadenia" if only_available else "zariadenia"
+    availability_text = "voľné zariadenia" if only_available else "zariadenia"
     message = (
-        f"Nasiel som tieto {availability_text}{who}. Ktore sa odovzdava?\n"
+        f"Našiel som tieto {availability_text}{who}. Ktoré chceš odovzdať?\n"
         f"{_format_asset_choices(assets)}\n\n"
-        "Odpovedz cislom, Assets klucom alebo nazvom zariadenia."
+        "Odpovedz číslom, Assets kľúčom alebo názvom zariadenia."
     )
     if not only_available:
         message = (
-            "Nenasiel som ziadne uplne volne HW zariadenie, preto ukazujem aj aktualne priradene kusy. "
+            "Nenašiel som žiadne úplne voľné HW zariadenie, preto ukazujem aj aktuálne priradené kusy. "
             "Vyber prepise priradenie v Assets.\n\n"
             + message
         )
     if not recipient:
-        message += " Potom mi napis aj meno cloveka, ktory ho dostane."
+        message += " Potom mi napíš aj meno človeka, ktorý ho dostane."
     return ChatResponse(
         action="onboarding_select_asset",
         message=message,
@@ -1273,6 +1271,22 @@ def _complete_onboarding_asset_selection(pending: dict[str, Any], message: str) 
         message=f"Onboarding dokument je pripraveny pre {generated['user']['display_name']}.{suffix}",
         data=generated,
     )
+
+
+def _friendly_error_message(error: Exception | str) -> str:
+    text = str(error)
+    lowered = text.lower()
+    if "jql" in lowered or "reserved word" in lowered or "vyhraden" in lowered:
+        return (
+            "Tomuto som nerozumel ako Jira vyhľadávaniu a nechcem ti vracať technickú chybu. "
+            "Skús to prosím napísať prirodzenejšie, napríklad: „daj mi zoznam userov“, "
+            "„aké máme tickety“ alebo „nájdi otvorené tickety o notebooku“."
+        )
+    if "no jira user found" in lowered or "pouzivatela" in lowered or "user found" in lowered:
+        return "Používateľa som nenašiel. Skús prosím celé meno alebo email."
+    if "assets" in lowered:
+        return "V Assets sa niečo nepodarilo načítať alebo upraviť. Skús prosím presnejší názov zariadenia alebo používateľa."
+    return "Niečo sa nepodarilo, ale nebudem ťa trápiť technickou chybou. Skús to prosím povedať ešte raz trochu konkrétnejšie."
 
 
 def _extract_issue_key_from_history(history: list[dict[str, str]] | None) -> str | None:
@@ -1790,6 +1804,7 @@ def chat(payload: ChatRequest) -> ChatResponse:
         model_input = payload.message if not history_text else f"Recent chat history:\n{history_text}\n\nUser: {payload.message}"
 
         lower_message = payload.message.lower()
+        normalized_message = _normalize_lookup_text(payload.message)
         yes_all_hint = bool(re.search(r"\b(vsetky|všetky|all|ano|áno|ok)\b", lower_message))
         create_hint = bool(re.search(r"\b(vytvor|sprav|vyrob|create|make)\b", lower_message)) and "ticket" in lower_message
         search_hint = bool(re.search(r"\b(najdi|hladaj|search|find|list|vypis)\b", lower_message))
@@ -1823,12 +1838,16 @@ def chat(payload: ChatRequest) -> ChatResponse:
         close_hint = bool(re.search(r"\b(zavri|uzavri|close|closed|resolve|resolved|hotovo|done)\b", lower_message)) and (
             "ticket" in lower_message or "tiket" in lower_message or _extract_issue_key(payload.message) is not None
         )
-        list_users_hint = bool(re.search(r"\b(zoznam|vypis|list|kto su|kto sú)\b", lower_message)) and bool(
-            re.search(r"\b(user|userov|users|pouzivatel|pouzivatelov|admin|adminov|admins)\b", lower_message)
+        list_users_hint = bool(
+            re.search(r"\b(zoznam|vypis|list|kto su|ake mame|akych mame|daj mi|ukaz)\b", normalized_message)
+            and re.search(
+                r"\b(user|useri|userov|users|uzivatel|uzivatelia|uzivatelov|pouzivatel|pouzivatelia|pouzivatelov|admin|admini|adminov|admins)\b",
+                normalized_message,
+            )
         )
         list_tickets_hint = bool(
-            re.search(r"\b(zoznam|vypis|list|ake mame|aké máme)\b", lower_message)
-            and re.search(r"\b(ticket|tiket|tickety|tiketov|issues)\b", lower_message)
+            re.search(r"\b(zoznam|vypis|list|ake mame|akych mame|daj mi|ukaz)\b", normalized_message)
+            and re.search(r"\b(ticket|tickets|tiket|tickety|tiketov|issue|issues)\b", normalized_message)
         )
         hw_person_hint = bool(re.search(r"\b(laptop|notebook|pc|computer|hardware|zariadenie|zariadenia)\b", lower_message)) and bool(
             re.search(r"\b(ma|má|has)\b", lower_message)
@@ -1848,11 +1867,11 @@ def chat(payload: ChatRequest) -> ChatResponse:
             action = "list_users"
         elif list_tickets_hint:
             action = "list_tickets"
-        elif protocol_for_person_hint:
-            action = "offboarding"
         elif onboarding_doc_hint:
             action = "onboarding"
         elif offboarding_doc_hint:
+            action = "offboarding"
+        elif protocol_for_person_hint:
             action = "offboarding"
         elif greeting_hint or thanks_hint:
             action = "chat"
@@ -1996,7 +2015,7 @@ def chat(payload: ChatRequest) -> ChatResponse:
             ]
             return ChatResponse(
                 action="list_users",
-                message=f"Found {len(mapped)} user(s)",
+                message=f"Našiel som {len(mapped)} používateľov.",
                 data={"users": mapped},
             )
 
@@ -2024,7 +2043,7 @@ def chat(payload: ChatRequest) -> ChatResponse:
                 )
             return ChatResponse(
                 action="list_tickets",
-                message=f"Found {len(issues)} ticket(s)",
+                message=f"Našiel som {len(issues)} tiketov.",
                 data={"jql": f"project = {settings.jira_project_key} ORDER BY updated DESC", "total": len(issues), "issues": issues},
             )
 
@@ -2095,7 +2114,7 @@ def chat(payload: ChatRequest) -> ChatResponse:
             if not user_identifier:
                 return ChatResponse(
                     action="offboarding",
-                    message="Jasne. Napis prosim meno alebo email cloveka, napriklad: offboarding Imrich Koch.",
+                    message="Jasné. Napíš prosím meno alebo email človeka, napríklad: offboarding Imrich Koch.",
                     data=None,
                 )
             if _assets_enabled():
@@ -2111,12 +2130,33 @@ def chat(payload: ChatRequest) -> ChatResponse:
                         response.data["pending_action"]["extra_text"] = _extract_extra_text(payload.message)
                     return response
                 if matched_user and not user_assets:
+                    request_norm = _normalize_lookup_text(payload.message)
+                    explicit_return = any(
+                        word in request_norm
+                        for word in ["preberaci", "vratenie", "offboarding", "offboard", "ukoncenie"]
+                    )
+                    if not explicit_return:
+                        available_assets = _assets_available_for_onboarding(max_results=25)
+                        if available_assets:
+                            response = _onboarding_selection_prompt(
+                                available_assets,
+                                recipient=matched_user.get("displayName") or user_identifier,
+                                extra_text=_extract_extra_text(payload.message),
+                                only_available=True,
+                            )
+                            response.message = (
+                                f"Pre {matched_user.get('displayName')} som nenašiel priradený HW na vrátenie. "
+                                "Ak chceš pripraviť protokol na odovzdanie nového zariadenia, vyber jeden z voľných počítačov:\n"
+                                + response.message.split("\n", 1)[1]
+                            )
+                            return response
                     return ChatResponse(
                         action="offboarding",
                         message=(
-                            f"Nasiel som pouzivatela {matched_user.get('displayName')}, "
-                            "ale nenasiel som mu priradene HW zariadenie v Assets. "
-                            "Protokol nevygenerujem, aby nebol nepresny."
+                            f"Našiel som používateľa {matched_user.get('displayName')}, "
+                            "ale v Assets pri ňom nevidím žiadny priradený počítač. "
+                            "Aby bol protokol presný, napíš prosím konkrétny asset kľúč, napríklad `CDX-4`, "
+                            "alebo požiadaj o odovzdávací protokol na nový počítač."
                         ),
                         data={"user": matched_user, "total": 0, "objects": []},
                     )
@@ -2188,17 +2228,21 @@ def chat(payload: ChatRequest) -> ChatResponse:
         search_result = _search_logic(query, payload.max_results)
         return ChatResponse(
             action="search",
-            message=f"Found {search_result.total} issue(s)",
+            message=f"Našiel som {search_result.total} tiketov.",
             data=search_result.model_dump(),
         )
-    except HTTPException:
-        raise
+    except HTTPException as exc:
+        return ChatResponse(
+            action="error",
+            message=_friendly_error_message(exc.detail),
+            data={"status_code": exc.status_code},
+        )
     except JQLValidationError as exc:
-        raise HTTPException(status_code=400, detail=f"Generated JQL rejected: {exc}") from exc
+        return ChatResponse(action="error", message=_friendly_error_message(exc), data={"type": "jql_validation"})
     except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return ChatResponse(action="error", message=_friendly_error_message(exc), data={"type": "runtime"})
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return ChatResponse(action="error", message=_friendly_error_message(exc), data={"type": "unexpected"})
 
 
 @app.post("/chat/widget", response_model=ChatResponse)

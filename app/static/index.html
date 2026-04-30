@@ -204,6 +204,10 @@
     }
 
     function normalizeResponse(data) {
+      if (data.action === "error") {
+        return data.message || "Niečo sa nepodarilo. Skús to prosím ešte raz.";
+      }
+
       if (data.action === "assets_print") {
         const lines = [];
         if (data.data?.protocol) {
@@ -233,12 +237,11 @@
 
       const lines = [];
       lines.push(`${data.message || "Done."}`);
-      if (data.action) lines.push(`Action: ${data.action}`);
+      // Keep internal routing out of the chat UI; users should see outcomes, not debug labels.
       if (data.data?.protocol) lines.push(`\n${data.data.protocol}`);
-      if (data.data?.jql) lines.push(`JQL: ${data.data.jql}`);
-      if (typeof data.data?.total === "number") lines.push(`Total: ${data.data.total}`);
+      if (typeof data.data?.total === "number") lines.push(`Spolu: ${data.data.total}`);
       if (Array.isArray(data.data?.users) && data.data.users.length) {
-        lines.push("\nUsers:");
+        lines.push("\nPoužívatelia:");
         for (const u of data.data.users.slice(0, 20)) {
           lines.push(`- ${u.display_name || "(no name)"}${u.email ? ` <${u.email}>` : ""}`);
         }
@@ -246,7 +249,7 @@
       if (data.data?.summary) lines.push(`\n${data.data.summary}`);
       if (data.data?.key) lines.push(`Ticket: ${data.data.key}`);
       if (Array.isArray(data.data?.issues) && data.data.issues.length) {
-        lines.push("\nIssues:");
+        lines.push("\nTikety:");
         for (const it of data.data.issues.slice(0, 8)) {
           lines.push(`- ${it.key}: ${it.summary || "(no summary)"}`);
         }
