@@ -9,6 +9,7 @@ const popoutEl = document.getElementById("popout");
 const issueEl = document.getElementById("issue");
 
 let issueKey = null;
+let pendingAction = null;
 const conversation = [];
 
 function addBubble(text, role, links = []) {
@@ -39,6 +40,9 @@ function addToConversation(role, content) {
 
 function normalizeResponse(data) {
   if (!data) return "No response.";
+  if (data.action === "error") {
+    return data.message || "Nieco sa nepodarilo. Skus to prosim este raz.";
+  }
   if (data.action === "assets_print" && data.data?.protocol) {
     return data.data.protocol;
   }
@@ -91,10 +95,15 @@ function normalizeResponse(data) {
 
   const lines = [];
   lines.push(data.message || "Done.");
-  if (data.action === "offboarding" && data.data?.document_url) {
+  if ((data.action === "offboarding" || data.action === "onboarding") && data.data?.document_url) {
     if (data.data?.template?.name) lines.push(`Sablona: ${data.data.template.name}`);
     if (data.data?.format) lines.push(`Format: ${data.data.format}`);
     if (Array.isArray(data.data?.assets)) lines.push(`Zariadenia: ${data.data.assets.length}`);
+    if (Array.isArray(data.data?.selected_assets)) lines.push(`Vybrane zariadenia: ${data.data.selected_assets.length}`);
+    if (Array.isArray(data.data?.assigned_assets)) lines.push(`Priradene v Assets: ${data.data.assigned_assets.length}`);
+    if (Array.isArray(data.data?.assign_errors) && data.data.assign_errors.length) {
+      lines.push(`Chyby priradenia: ${data.data.assign_errors.length}`);
+    }
     lines.push(`Subor: ${data.data.document_url}`);
     return lines.join("\n");
   }
@@ -113,6 +122,16 @@ function normalizeResponse(data) {
     }
   }
   return lines.join("\n");
+}
+
+function capturePendingAction(data) {
+  if (data?.data?.pending_action) {
+    pendingAction = data.data.pending_action;
+    return;
+  }
+  if (data?.action !== "chat") {
+    pendingAction = null;
+  }
 }
 
 function responseLinks(data) {
@@ -175,13 +194,15 @@ formEl.addEventListener("submit", async (e) => {
     const result = await invoke("sendMessage", {
       message,
       issueKey,
-      history: conversation.slice(-20)
+      history: conversation.slice(-20),
+      pendingAction
     });
     if (!result?.ok) {
       const err = `Error: ${result?.error || "Request failed"}`;
       addBubble(err, "bot");
       addToConversation("assistant", err);
     } else {
+      capturePendingAction(result.data);
       const text = normalizeResponse(result.data);
       addBubble(text, "bot", responseLinks(result.data));
       addToConversation("assistant", text);

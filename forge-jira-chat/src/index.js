@@ -15,6 +15,7 @@ resolver.define("sendMessage", async ({ payload }) => {
 
   const issueKey = payload?.issueKey || null;
   const history = Array.isArray(payload?.history) ? payload.history.slice(-20) : [];
+  const pendingAction = payload?.pendingAction && typeof payload.pendingAction === "object" ? payload.pendingAction : null;
   const message = String(payload?.message || "").trim();
   if (!message) {
     return { ok: false, error: "Message is empty." };
@@ -35,7 +36,8 @@ resolver.define("sendMessage", async ({ payload }) => {
       max_results: 20,
       max_comments: 20,
       current_issue_key: issueKey,
-      history
+      history,
+      pending_action: pendingAction
     })
   });
 
@@ -52,6 +54,13 @@ resolver.define("sendMessage", async ({ payload }) => {
       ok: false,
       error: data?.detail || `Backend error (${response.status})`
     };
+  }
+
+  const publicBackendUrl = backendUrl.replace(/\/$/, "");
+  for (const key of ["document_url", "protocol_url"]) {
+    if (typeof data?.data?.[key] === "string" && data.data[key].startsWith("/")) {
+      data.data[key] = `${publicBackendUrl}${data.data[key]}`;
+    }
   }
 
   return { ok: true, data };

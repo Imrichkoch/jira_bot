@@ -559,6 +559,8 @@ def _resolve_user_for_assets(user_query: str) -> dict[str, Any] | None:
         if score > best_score:
             best_score = score
             best_user = u
+    if query_tokens and best_score <= 0:
+        return None
     return best_user
 
 
@@ -683,6 +685,61 @@ def _extract_person_after_pre(text: str) -> str | None:
         return None
     candidate = match.group(1).strip(" .,:;!?()[]{}\"'")
     return candidate if len(candidate) >= 2 else None
+
+
+def _extract_onboarding_recipient_from_history(text: str) -> str | None:
+    normalized = _normalize_lookup_text(text)
+    for pattern in [
+        r"\bvolne zariadenia pre ([^.?\n]+)",
+        r"\bzariadenia pre ([^.?\n]+)",
+        r"\bpre ([a-z0-9._%+\-@ ]{2,120})\. ktore chces odovzdat",
+        r"\bpre ([a-z0-9._%+\-@ ]{2,120})\. ktore sa odovzdava",
+    ]:
+        match = re.search(pattern, normalized, flags=re.IGNORECASE)
+        if match:
+            candidate = match.group(1).strip(" .,:;!?()[]{}\"'")
+            if candidate:
+                return candidate
+    return None
+
+
+def _recover_onboarding_pending_from_history(message: str, history: list[dict[str, str]] | None) -> ChatResponse | None:
+    key_match = re.fullmatch(r"\s*([A-Z]{2,10}-\d+)\s*", message.upper())
+    if not key_match or not _assets_enabled():
+        return None
+    asset_key = key_match.group(1)
+    history_items = history or []
+    for item in reversed(history_items[-12:]):
+        if (item.get("role") or "").lower() not in {"assistant", "bot"}:
+            continue
+        content = item.get("content") or ""
+        content_norm = _normalize_lookup_text(content)
+        if not (
+            "odovzdat" in content_norm
+            or "odovzdava" in content_norm
+            or "onboarding" in content_norm
+            or "volne zariadenia" in content_norm
+        ):
+            continue
+        recipient = _extract_onboarding_recipient_from_history(content)
+        if not recipient:
+            continue
+        try:
+            workspace_id = _require_assets_workspace()
+            raw_asset = jira.get_asset_object(workspace_id=workspace_id, object_id_or_key=asset_key)
+            asset = flatten_assets_object(raw_asset)
+        except Exception:
+            return None
+        return _complete_onboarding_asset_selection(
+            {
+                "type": "onboarding_select_asset",
+                "recipient": recipient,
+                "extra_text": "",
+                "assets": [asset],
+            },
+            asset_key,
+        )
+    return None
 
 
 def _extract_offboarding_person(text: str, parsed: dict[str, Any] | None = None) -> str | None:
@@ -1803,6 +1860,16 @@ def chat(payload: ChatRequest) -> ChatResponse:
         ).strip()
         model_input = payload.message if not history_text else f"Recent chat history:\n{history_text}\n\nUser: {payload.message}"
 
+        pending = payload.pending_action or {}
+        if pending.get("type") == "offboarding_select_asset":
+            return _complete_offboarding_asset_selection(pending, payload.message)
+        if pending.get("type") in {"onboarding_select_asset", "onboarding_select_recipient"}:
+            return _complete_onboarding_asset_selection(pending, payload.message)
+
+        recovered_onboarding = _recover_onboarding_pending_from_history(payload.message, payload.history)
+        if recovered_onboarding:
+            return recovered_onboarding
+
         lower_message = payload.message.lower()
         normalized_message = _normalize_lookup_text(payload.message)
         yes_all_hint = bool(re.search(r"\b(vsetky|všetky|all|ano|áno|ok)\b", lower_message))
@@ -1889,12 +1956,6 @@ def chat(payload: ChatRequest) -> ChatResponse:
             action = "offboarding"
         elif assets_hint and action in {"search", ""}:
             action = "assets_search"
-
-        pending = payload.pending_action or {}
-        if pending.get("type") == "offboarding_select_asset":
-            return _complete_offboarding_asset_selection(pending, payload.message)
-        if pending.get("type") in {"onboarding_select_asset", "onboarding_select_recipient"}:
-            return _complete_onboarding_asset_selection(pending, payload.message)
 
         if pending.get("type") == "assign_all_unassigned" and yes_all_hint:
             assignee_query = str(pending.get("assignee_query") or "").strip()
