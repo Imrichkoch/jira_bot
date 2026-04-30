@@ -1103,21 +1103,53 @@ def _onboarding_selection_prompt(
     )
 
 
-def _find_assignment_attribute(raw_asset: dict[str, Any], user_hint: str | None = None) -> dict[str, Any] | None:
+ASSIGNMENT_ATTRIBUTE_NAMES = [
+    "assigned user",
+    "assigned to",
+    "assignee",
+    "owner",
+    "user",
+    "pouzivatel",
+    "používateľ",
+    "drzitel",
+    "držiteľ",
+]
+
+
+def _assignment_attr_id(attr: dict[str, Any]) -> str:
+    ota = attr.get("objectTypeAttribute") or attr
+    return str(attr.get("objectTypeAttributeId") or ota.get("id") or attr.get("id") or "").strip()
+
+
+def _assignment_attr_name(attr: dict[str, Any]) -> str:
+    ota = attr.get("objectTypeAttribute") or attr
+    return str(ota.get("name") or attr.get("name") or "").strip()
+
+
+def _assignment_attr_default_type(attr: dict[str, Any]) -> str:
+    ota = attr.get("objectTypeAttribute") or attr
+    default_type = ota.get("defaultType") or {}
+    return _normalize_lookup_text(str(default_type.get("name") or ota.get("typeValue") or ""))
+
+
+def _wrap_schema_assignment_attr(attr: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "objectTypeAttribute": attr,
+        "objectTypeAttributeId": attr.get("id"),
+        "objectAttributeValues": [],
+    }
+
+
+def _find_assignment_attribute(
+    raw_asset: dict[str, Any],
+    user_hint: str | None = None,
+    schema_attributes: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
     normalized_user = _normalize_lookup_text(user_hint or "")
-    preferred_names = [
-        "assigned user",
-        "assigned to",
-        "assignee",
-        "owner",
-        "user",
-        "pouzivatel",
-        "používateľ",
-        "drzitel",
-        "držiteľ",
-    ]
     scored: list[tuple[int, dict[str, Any]]] = []
-    for attr in raw_asset.get("attributes") or []:
+    candidates = list(raw_asset.get("attributes") or [])
+    candidates.extend(_wrap_schema_assignment_attr(attr) for attr in schema_attributes or [])
+    for attr in candidates:
         ota = attr.get("objectTypeAttribute") or {}
         if ota.get("editable") is False:
             continue
@@ -1126,7 +1158,7 @@ def _find_assignment_attribute(raw_asset: dict[str, Any], user_hint: str | None 
         name_norm = _normalize_lookup_text(str(ota.get("name") or ""))
         values_text = _normalize_lookup_text(json.dumps(attr.get("objectAttributeValues") or [], ensure_ascii=False))
         score = 0
-        for index, preferred in enumerate(preferred_names):
+        for index, preferred in enumerate(ASSIGNMENT_ATTRIBUTE_NAMES):
             if preferred in name_norm:
                 score += 100 - index
         if normalized_user and normalized_user in values_text:
@@ -1135,6 +1167,46 @@ def _find_assignment_attribute(raw_asset: dict[str, Any], user_hint: str | None 
             scored.append((score, attr))
     scored.sort(key=lambda item: item[0], reverse=True)
     return scored[0][1] if scored else None
+
+
+def _get_or_create_assignment_attribute(
+    *,
+    workspace_id: str,
+    object_type_id: str,
+    raw_asset: dict[str, Any],
+    user_hint: str | None = None,
+) -> dict[str, Any]:
+    assignment_attr = _find_assignment_attribute(raw_asset, user_hint=user_hint)
+    if assignment_attr:
+        return assignment_attr
+
+    schema_attrs = jira.list_object_type_attributes(workspace_id=workspace_id, object_type_id=object_type_id)
+    assignment_attr = _find_assignment_attribute(raw_asset, user_hint=user_hint, schema_attributes=schema_attrs)
+    if assignment_attr:
+        return assignment_attr
+
+    created = jira.create_object_type_attribute(
+        workspace_id=workspace_id,
+        object_type_id=object_type_id,
+        name="Assigned user",
+        type_id=0,
+        default_type_id=0,
+        minimum_cardinality=0,
+        maximum_cardinality=1,
+    )
+    return _wrap_schema_assignment_attr(created)
+
+
+def _assignment_value_for_user(attr: dict[str, Any], user: dict[str, Any]) -> str:
+    if "user" in _assignment_attr_default_type(attr):
+        value = str(user.get("accountId") or "").strip()
+        if value:
+            return value
+    display_name = str(user.get("displayName") or "").strip()
+    email = str(user.get("emailAddress") or "").strip()
+    if display_name and email:
+        return f"{display_name} <{email}>"
+    return display_name or email or str(user.get("accountId") or "").strip()
 
 
 def _unassign_asset_from_user(asset: dict[str, Any], user_hint: str | None = None) -> dict[str, Any]:
@@ -1149,11 +1221,7 @@ def _unassign_asset_from_user(asset: dict[str, Any], user_hint: str | None = Non
     assignment_attr = _find_assignment_attribute(raw_asset, user_hint=user_hint)
     if not assignment_attr:
         raise RuntimeError(f"No editable optional assignment attribute found on {object_id_or_key}.")
-    attr_id = str(
-        assignment_attr.get("objectTypeAttributeId")
-        or (assignment_attr.get("objectTypeAttribute") or {}).get("id")
-        or ""
-    )
+    attr_id = _assignment_attr_id(assignment_attr)
     if not attr_id:
         raise RuntimeError(f"Assignment attribute on {object_id_or_key} has no id.")
     updated = jira.update_asset_object(
@@ -1170,7 +1238,7 @@ def _unassign_asset_from_user(asset: dict[str, Any], user_hint: str | None = Non
     return {
         "object_key": raw_asset.get("objectKey") or object_id_or_key,
         "label": raw_asset.get("label"),
-        "cleared_attribute": ((assignment_attr.get("objectTypeAttribute") or {}).get("name") or attr_id),
+        "cleared_attribute": _assignment_attr_name(assignment_attr) or attr_id,
         "updated": flatten_assets_object(updated),
     }
 
@@ -1184,17 +1252,15 @@ def _assign_asset_to_user(asset: dict[str, Any], user: dict[str, Any]) -> dict[s
     object_type_id = str((raw_asset.get("objectType") or {}).get("id") or "")
     if not object_type_id:
         raise RuntimeError(f"Assets object {object_id_or_key} has no objectTypeId.")
-    assignment_attr = _find_assignment_attribute(raw_asset)
-    if not assignment_attr:
-        raise RuntimeError(f"No editable optional assignment attribute found on {object_id_or_key}.")
-    attr_id = str(
-        assignment_attr.get("objectTypeAttributeId")
-        or (assignment_attr.get("objectTypeAttribute") or {}).get("id")
-        or ""
+    assignment_attr = _get_or_create_assignment_attribute(
+        workspace_id=workspace_id,
+        object_type_id=object_type_id,
+        raw_asset=raw_asset,
     )
+    attr_id = _assignment_attr_id(assignment_attr)
     if not attr_id:
         raise RuntimeError(f"Assignment attribute on {object_id_or_key} has no id.")
-    value = str(user.get("displayName") or user.get("emailAddress") or user.get("accountId") or "").strip()
+    value = _assignment_value_for_user(assignment_attr, user)
     if not value:
         raise RuntimeError("Recipient user has no usable display value.")
     updated = jira.update_asset_object(
@@ -1211,7 +1277,7 @@ def _assign_asset_to_user(asset: dict[str, Any], user: dict[str, Any]) -> dict[s
     return {
         "object_key": raw_asset.get("objectKey") or object_id_or_key,
         "label": raw_asset.get("label"),
-        "assigned_attribute": ((assignment_attr.get("objectTypeAttribute") or {}).get("name") or attr_id),
+        "assigned_attribute": _assignment_attr_name(assignment_attr) or attr_id,
         "assigned_value": value,
         "updated": flatten_assets_object(updated),
     }

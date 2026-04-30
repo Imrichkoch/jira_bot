@@ -168,6 +168,37 @@ class JiraClient:
     def get_asset_object(self, *, workspace_id: str, object_id_or_key: str) -> dict[str, Any]:
         return self._request("GET", f"/gateway/api/jsm/assets/workspace/{workspace_id}/v1/object/{object_id_or_key}")
 
+    def list_object_type_attributes(self, *, workspace_id: str, object_type_id: str) -> list[dict[str, Any]]:
+        data = self._request(
+            "GET",
+            f"/gateway/api/jsm/assets/workspace/{workspace_id}/v1/objecttype/{object_type_id}/attributes",
+        )
+        return data if isinstance(data, list) else []
+
+    def create_object_type_attribute(
+        self,
+        *,
+        workspace_id: str,
+        object_type_id: str,
+        name: str,
+        type_id: int = 0,
+        default_type_id: int = 0,
+        minimum_cardinality: int = 0,
+        maximum_cardinality: int = 1,
+    ) -> dict[str, Any]:
+        payload = {
+            "name": name,
+            "type": type_id,
+            "defaultTypeId": default_type_id,
+            "minimumCardinality": minimum_cardinality,
+            "maximumCardinality": maximum_cardinality,
+        }
+        return self._request(
+            "POST",
+            f"/gateway/api/jsm/assets/workspace/{workspace_id}/v1/objecttypeattribute/{object_type_id}",
+            json=payload,
+        )
+
     def update_asset_object(
         self,
         *,
