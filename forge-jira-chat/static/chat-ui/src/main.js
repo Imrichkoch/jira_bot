@@ -1,4 +1,4 @@
-import { invoke, view, Modal } from "@forge/bridge";
+import { invoke, view, Modal, router } from "@forge/bridge";
 import "./styles.css";
 
 const chatEl = document.getElementById("chat");
@@ -19,13 +19,18 @@ function addBubble(text, role, links = []) {
   body.textContent = text;
   el.appendChild(body);
   for (const link of links) {
-    const a = document.createElement("a");
-    a.className = "download-link";
-    a.href = link.href;
-    a.target = "_blank";
-    a.rel = "noopener";
-    a.textContent = link.label;
-    el.appendChild(a);
+    const button = document.createElement("button");
+    button.className = "download-link";
+    button.type = "button";
+    button.textContent = link.label;
+    button.addEventListener("click", async () => {
+      try {
+        await router.open(link.href);
+      } catch {
+        window.open(link.href, "_blank", "noopener");
+      }
+    });
+    el.appendChild(button);
   }
   chatEl.appendChild(el);
   chatEl.scrollTop = chatEl.scrollHeight;

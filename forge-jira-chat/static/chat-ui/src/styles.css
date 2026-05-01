@@ -111,11 +111,18 @@ body {
   width: fit-content;
   margin-top: 8px;
   padding: 7px 9px;
+  border: 0;
   border-radius: 8px;
   background: var(--accent);
   color: #fff;
   font-weight: 700;
+  font: inherit;
   text-decoration: none;
+  cursor: pointer;
+}
+
+.download-link:hover {
+  background: var(--accent-strong);
 }
 
 .composer {
