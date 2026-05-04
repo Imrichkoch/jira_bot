@@ -1,15 +1,21 @@
+import base64
+import hashlib
+import hmac
 import re
 import json
+import secrets
+import time
 import unicodedata
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.admin_store import AdminStore
 from app.ai_client import AIClient
@@ -62,7 +68,21 @@ onboarding_template_store = OffboardingTemplateStore(DATA_DIR, root_name="onboar
 jira = JiraClient(settings)
 ai = AIClient(settings, runtime_context=runtime_settings.ai_context)
 STATIC_DIR = BASE_DIR / "static"
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+GENERATED_DIR = DATA_DIR / "generated"
+PENDING_ACTION_TTL_SECONDS = 30 * 60
+DOWNLOAD_TOKEN_TTL_SECONDS = 4 * 60 * 60
+_SECURITY_SECRET = (settings.widget_shared_secret or "").strip() or secrets.token_urlsafe(32)
+
+
+class RestrictedStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope: dict[str, Any]) -> Any:
+        first_segment = path.replace("\\", "/").split("/", 1)[0].lower()
+        if first_segment in {"offboarding", "onboarding", "protocols"}:
+            raise StarletteHTTPException(status_code=404)
+        return await super().get_response(path, scope)
+
+
+app.mount("/static", RestrictedStaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 MODEL_CATALOG = [
@@ -184,6 +204,77 @@ MODEL_CATALOG = [
     },
 ]
 AVAILABLE_MODELS = [model["id"] for group in MODEL_CATALOG for model in group["models"] if model["id"] != "custom"]
+BOT_PERMISSIONS = [
+    {
+        "id": "chat",
+        "label": "Chat",
+        "description": "Vseobecne odpovede a pomoc bez zapisu do Jira.",
+    },
+    {
+        "id": "tickets.read",
+        "label": "Tickety - citanie",
+        "description": "Vyhladavanie, zoznam a sumarizacia ticketov.",
+    },
+    {
+        "id": "tickets.write",
+        "label": "Tickety - vytvaranie",
+        "description": "Vytvaranie novych ticketov.",
+    },
+    {
+        "id": "tickets.assign",
+        "label": "Tickety - priradenie",
+        "description": "Priradovanie ticketov pouzivatelom.",
+    },
+    {
+        "id": "tickets.close",
+        "label": "Tickety - zatvaranie",
+        "description": "Zatvaranie alebo riesenie ticketov.",
+    },
+    {
+        "id": "users.read",
+        "label": "Jira pouzivatelia",
+        "description": "Zobrazenie Jira pouzivatelov cez bota.",
+    },
+    {
+        "id": "assets.read",
+        "label": "Assets - citanie",
+        "description": "Vyhladavanie v Assets a zobrazenie zariadeni.",
+    },
+    {
+        "id": "assets.write",
+        "label": "Assets - zapis",
+        "description": "Priradenie alebo odobratie zariadeni v Assets.",
+    },
+    {
+        "id": "documents.generate",
+        "label": "Dokumenty",
+        "description": "Generovanie onboarding/offboarding protokolov.",
+    },
+]
+BOT_PERMISSION_IDS = {permission["id"] for permission in BOT_PERMISSIONS}
+ACTION_PERMISSION_MAP = {
+    "chat": ["chat"],
+    "help": ["chat"],
+    "whoami": ["chat"],
+    "search": ["tickets.read"],
+    "list_tickets": ["tickets.read"],
+    "summarize": ["tickets.read"],
+    "similar": ["tickets.read"],
+    "create": ["tickets.write"],
+    "assign": ["tickets.assign"],
+    "assign_bulk": ["tickets.assign"],
+    "close": ["tickets.close"],
+    "list_users": ["users.read"],
+    "assets_search": ["assets.read"],
+    "assets_owner": ["assets.read"],
+    "assets_hw": ["assets.read"],
+    "assets_job_file": ["assets.read"],
+    "assets_dora": ["assets.read"],
+    "assets_sla": ["assets.read"],
+    "assets_print": ["assets.read", "documents.generate"],
+    "offboarding": ["assets.read", "assets.write", "documents.generate"],
+    "onboarding": ["assets.read", "assets.write", "documents.generate"],
+}
 
 
 class AdminLoginRequest(BaseModel):
@@ -195,6 +286,18 @@ class AdminCreateRequest(BaseModel):
     username: str = Field(min_length=3, max_length=80)
     password: str = Field(min_length=10, max_length=500)
     display_name: str | None = Field(default=None, max_length=120)
+
+
+class BotGroupRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    description: str | None = Field(default=None, max_length=500)
+    permissions: list[str] = Field(default_factory=list)
+
+
+class BotGroupMemberRequest(BaseModel):
+    account_id: str = Field(min_length=5, max_length=255)
+    display_name: str | None = Field(default=None, max_length=255)
+    email: str | None = Field(default=None, max_length=255)
 
 
 class BotSettingsRequest(BaseModel):
@@ -218,14 +321,123 @@ class OffboardingDocumentRequest(BaseModel):
     template_id: str | None = Field(default=None, max_length=80)
 
 
-def _require_admin(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+def _admin_from_authorization(authorization: str | None) -> dict[str, Any] | None:
     if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=401, detail="Admin login required.")
+        return None
     token = authorization.split(" ", 1)[1].strip()
-    admin = admin_store.get_session_admin(token)
+    return admin_store.get_session_admin(token)
+
+
+def _require_admin(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    admin = _admin_from_authorization(authorization)
     if not admin:
         raise HTTPException(status_code=401, detail="Invalid or expired admin session.")
     return admin
+
+
+def _has_valid_widget_secret(x_widget_secret: str | None) -> bool:
+    expected = (settings.widget_shared_secret or "").strip()
+    supplied = (x_widget_secret or "").strip()
+    return bool(expected and supplied and secrets.compare_digest(supplied, expected))
+
+
+def _require_api_access(
+    authorization: str | None = Header(default=None),
+    x_widget_secret: str | None = Header(default=None),
+) -> dict[str, Any]:
+    if _has_valid_widget_secret(x_widget_secret):
+        return {"type": "widget"}
+    admin = _admin_from_authorization(authorization)
+    if admin:
+        return {"type": "admin", "admin": admin}
+    raise HTTPException(status_code=401, detail="API access requires an admin session or a valid widget secret.")
+
+
+def _require_widget_access(x_widget_secret: str | None = Header(default=None)) -> dict[str, Any]:
+    if not (settings.widget_shared_secret or "").strip():
+        raise HTTPException(status_code=503, detail="WIDGET_SHARED_SECRET is not configured.")
+    if not _has_valid_widget_secret(x_widget_secret):
+        raise HTTPException(status_code=401, detail="Unauthorized widget request.")
+    return {"type": "widget"}
+
+
+def _b64url_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _b64url_decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode((value + padding).encode("ascii"))
+
+
+def _sign_bytes(raw: bytes) -> str:
+    return _b64url_encode(hmac.new(_SECURITY_SECRET.encode("utf-8"), raw, hashlib.sha256).digest())
+
+
+def _signed_pending_action(pending: dict[str, Any]) -> dict[str, str]:
+    envelope = {
+        "v": 1,
+        "exp": int(time.time()) + PENDING_ACTION_TTL_SECONDS,
+        "payload": pending,
+    }
+    raw = json.dumps(envelope, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return {"token": f"{_b64url_encode(raw)}.{_sign_bytes(raw)}"}
+
+
+def _pending_data(pending: dict[str, Any], **extra: Any) -> dict[str, Any]:
+    data = {"pending_action": _signed_pending_action(pending)}
+    data.update(extra)
+    return data
+
+
+def _decode_pending_action(value: dict[str, Any] | None) -> dict[str, Any]:
+    if not value:
+        return {}
+    token = value.get("token") if isinstance(value, dict) else None
+    if not isinstance(token, str) or "." not in token:
+        raise HTTPException(status_code=400, detail="Pending action is missing or unsigned. Please repeat the previous request.")
+    raw_part, sig_part = token.split(".", 1)
+    try:
+        raw = _b64url_decode(raw_part)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Pending action is invalid. Please repeat the previous request.") from exc
+    expected_sig = _sign_bytes(raw)
+    if not secrets.compare_digest(sig_part, expected_sig):
+        raise HTTPException(status_code=400, detail="Pending action signature is invalid. Please repeat the previous request.")
+    try:
+        envelope = json.loads(raw.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Pending action is invalid. Please repeat the previous request.") from exc
+    if int(envelope.get("exp") or 0) < int(time.time()):
+        raise HTTPException(status_code=400, detail="Pending action expired. Please repeat the previous request.")
+    payload = envelope.get("payload")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Pending action is invalid. Please repeat the previous request.")
+    return payload
+
+
+def _download_signature(kind: str, file_name: str, expires: int) -> str:
+    raw = f"{kind}/{file_name}:{expires}".encode("utf-8")
+    return _sign_bytes(raw)
+
+
+def _signed_download_url(kind: str, file_name: str) -> str:
+    expires = int(time.time()) + DOWNLOAD_TOKEN_TTL_SECONDS
+    token = _download_signature(kind, file_name, expires)
+    return f"/download/{kind}/{file_name}?expires={expires}&token={token}"
+
+
+def _generated_file_path(kind: str, file_name: str) -> Path:
+    if kind not in {"offboarding", "onboarding", "protocols"}:
+        raise HTTPException(status_code=404, detail="Unknown download type.")
+    safe_name = Path(file_name).name
+    if safe_name != file_name or not safe_name:
+        raise HTTPException(status_code=404, detail="File not found.")
+    path = (GENERATED_DIR / kind / safe_name).resolve()
+    root = (GENERATED_DIR / kind).resolve()
+    if root not in path.parents and path != root:
+        raise HTTPException(status_code=404, detail="File not found.")
+    return path
 
 
 @app.get("/health")
@@ -241,6 +453,19 @@ def chat_ui() -> FileResponse:
 @app.get("/admin")
 def admin_ui() -> FileResponse:
     return FileResponse(STATIC_DIR / "admin.html")
+
+
+@app.get("/download/{kind}/{file_name}")
+def download_generated_file(kind: str, file_name: str, expires: int = Query(...), token: str = Query(...)) -> FileResponse:
+    if expires < int(time.time()):
+        raise HTTPException(status_code=403, detail="Download link expired.")
+    expected = _download_signature(kind, file_name, expires)
+    if not secrets.compare_digest(token, expected):
+        raise HTTPException(status_code=403, detail="Invalid download token.")
+    path = _generated_file_path(kind, file_name)
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="File not found.")
+    return FileResponse(path, filename=file_name)
 
 
 @app.post("/admin/api/login")
@@ -275,6 +500,149 @@ def admin_create(payload: AdminCreateRequest, admin: dict[str, Any] = Depends(_r
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Admin account could not be created.") from exc
     return {"admin": created}
+
+
+def _validate_bot_permissions(permissions: list[str]) -> list[str]:
+    clean_permissions = sorted({str(permission).strip() for permission in permissions if str(permission).strip()})
+    unknown = [permission for permission in clean_permissions if permission not in BOT_PERMISSION_IDS]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unknown bot permission(s): {', '.join(unknown)}")
+    return clean_permissions
+
+
+def _map_jira_user(user: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "account_id": user.get("accountId") or user.get("account_id"),
+        "display_name": user.get("displayName") or user.get("display_name"),
+        "email": user.get("emailAddress") or user.get("email"),
+        "active": user.get("active"),
+    }
+
+
+@app.get("/admin/api/jira-users")
+def admin_jira_users(
+    query: str = Query(default="", max_length=120),
+    max_results: int = Query(default=100, ge=1, le=200),
+    admin: dict[str, Any] = Depends(_require_admin),
+) -> dict[str, Any]:
+    users: list[dict[str, Any]] = []
+    errors: list[str] = []
+    try:
+        if query.strip():
+            users.extend(jira.search_users(query=query.strip(), max_results=max_results))
+        else:
+            users.extend(jira.list_assignable_users(project_key=settings.jira_project_key, max_results=max_results))
+    except Exception as exc:
+        errors.append(str(exc))
+    if not users and query.strip():
+        try:
+            users.extend(jira.list_assignable_users(project_key=settings.jira_project_key, max_results=max_results))
+        except Exception as exc:
+            errors.append(str(exc))
+
+    seen: set[str] = set()
+    mapped: list[dict[str, Any]] = []
+    query_norm = _normalize_lookup_text(query)
+    for user in users:
+        item = _map_jira_user(user)
+        account_id = str(item.get("account_id") or "").strip()
+        if not account_id or account_id in seen:
+            continue
+        text = _normalize_lookup_text(f"{item.get('display_name') or ''} {item.get('email') or ''}")
+        if query_norm and query_norm not in text:
+            tokens = [token for token in re.findall(r"[a-z0-9]{2,}", query_norm) if token not in {"user", "users"}]
+            if tokens and not all(token in text for token in tokens):
+                continue
+        seen.add(account_id)
+        mapped.append(item)
+    return {"users": mapped[:max_results], "errors": errors}
+
+
+@app.get("/admin/api/bot-permissions")
+def admin_bot_permissions(admin: dict[str, Any] = Depends(_require_admin)) -> dict[str, Any]:
+    return {"permissions": BOT_PERMISSIONS}
+
+
+@app.get("/admin/api/bot-groups")
+def admin_bot_groups(admin: dict[str, Any] = Depends(_require_admin)) -> dict[str, Any]:
+    return {"groups": admin_store.list_bot_groups()}
+
+
+@app.post("/admin/api/bot-groups")
+def admin_create_bot_group(payload: BotGroupRequest, admin: dict[str, Any] = Depends(_require_admin)) -> dict[str, Any]:
+    permissions = _validate_bot_permissions(payload.permissions)
+    try:
+        group = admin_store.create_bot_group(
+            name=payload.name,
+            description=payload.description,
+            permissions=permissions,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Bot group could not be created.") from exc
+    return {"group": group, "groups": admin_store.list_bot_groups()}
+
+
+@app.put("/admin/api/bot-groups/{group_id}")
+def admin_update_bot_group(
+    group_id: int,
+    payload: BotGroupRequest,
+    admin: dict[str, Any] = Depends(_require_admin),
+) -> dict[str, Any]:
+    permissions = _validate_bot_permissions(payload.permissions)
+    try:
+        group = admin_store.update_bot_group(
+            group_id,
+            name=payload.name,
+            description=payload.description,
+            permissions=permissions,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Bot group could not be updated.") from exc
+    return {"group": group, "groups": admin_store.list_bot_groups()}
+
+
+@app.delete("/admin/api/bot-groups/{group_id}")
+def admin_delete_bot_group(group_id: int, admin: dict[str, Any] = Depends(_require_admin)) -> dict[str, Any]:
+    try:
+        admin_store.delete_bot_group(group_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"groups": admin_store.list_bot_groups()}
+
+
+@app.post("/admin/api/bot-groups/{group_id}/members")
+def admin_add_bot_group_member(
+    group_id: int,
+    payload: BotGroupMemberRequest,
+    admin: dict[str, Any] = Depends(_require_admin),
+) -> dict[str, Any]:
+    try:
+        member = admin_store.add_bot_group_member(
+            group_id,
+            account_id=payload.account_id,
+            display_name=payload.display_name,
+            email=payload.email,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"member": member, "groups": admin_store.list_bot_groups()}
+
+
+@app.delete("/admin/api/bot-groups/{group_id}/members/{account_id}")
+def admin_remove_bot_group_member(
+    group_id: int,
+    account_id: str,
+    admin: dict[str, Any] = Depends(_require_admin),
+) -> dict[str, Any]:
+    try:
+        admin_store.remove_bot_group_member(group_id, account_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"groups": admin_store.list_bot_groups()}
 
 
 @app.get("/admin/api/settings")
@@ -564,6 +932,74 @@ def _resolve_user_for_assets(user_query: str) -> dict[str, Any] | None:
     return best_user
 
 
+def _current_user_from_payload(payload: ChatRequest) -> dict[str, Any] | None:
+    current_user = payload.current_user if isinstance(payload.current_user, dict) else {}
+    account_id = str(current_user.get("account_id") or current_user.get("accountId") or "").strip()
+    if not account_id:
+        return None
+    try:
+        user = jira.get_user(account_id=account_id)
+        if isinstance(user, dict) and user.get("accountId"):
+            return user
+    except Exception:
+        pass
+    return {
+        "accountId": account_id,
+        "displayName": current_user.get("display_name") or current_user.get("displayName") or account_id,
+        "emailAddress": current_user.get("email") or current_user.get("emailAddress"),
+    }
+
+
+def _current_user_query(payload: ChatRequest) -> str | None:
+    user = _current_user_from_payload(payload)
+    if not user:
+        return None
+    return str(user.get("displayName") or user.get("emailAddress") or user.get("accountId") or "").strip() or None
+
+
+def _bot_permission_error(
+    *,
+    action: str,
+    current_user: dict[str, Any] | None,
+    api_access: dict[str, Any] | Any,
+    extra_permissions: list[str] | None = None,
+) -> ChatResponse | None:
+    if isinstance(api_access, dict) and api_access.get("type") == "admin":
+        return None
+    if not admin_store.bot_groups_configured():
+        return None
+    required = list(ACTION_PERMISSION_MAP.get(action, ["tickets.read"]))
+    required.extend(extra_permissions or [])
+    required = sorted({permission for permission in required if permission})
+    account_id = str((current_user or {}).get("accountId") or "").strip()
+    if not account_id:
+        return ChatResponse(
+            action="forbidden",
+            message=(
+                "Nemam potvrdenu identitu aktualneho Jira pouzivatela, preto tuto akciu nemozem spustit. "
+                "Skus to prosim z Jira panelu po obnove stranky, alebo poziadaj admina o kontrolu Forge appky."
+            ),
+            data={"required_permissions": required},
+        )
+    user_permissions = admin_store.permissions_for_account(account_id)
+    missing = [permission for permission in required if permission not in user_permissions]
+    if not missing:
+        return None
+    return ChatResponse(
+        action="forbidden",
+        message=(
+            "Na tuto akciu nemas v JiraBote nastavene prava. "
+            f"Chybajuce prava: {', '.join(missing)}."
+        ),
+        data={
+            "account_id": account_id,
+            "required_permissions": required,
+            "missing_permissions": missing,
+            "user_permissions": sorted(user_permissions),
+        },
+    )
+
+
 def _assets_text(obj: dict[str, Any]) -> str:
     attrs = obj.get("attributes") or {}
     return _normalize_lookup_text(
@@ -845,7 +1281,7 @@ def _generate_offboarding_document(
         result = render_offboarding_document(
             template_store=template_store,
             template=template,
-            output_dir=STATIC_DIR / "offboarding",
+            output_dir=GENERATED_DIR / "offboarding",
             values=context["values"],
             file_stem=file_stem,
         )
@@ -856,11 +1292,11 @@ def _generate_offboarding_document(
         result = render_offboarding_document(
             template_store=template_store,
             template=None,
-            output_dir=STATIC_DIR / "offboarding",
+            output_dir=GENERATED_DIR / "offboarding",
             values=context["values"],
             file_stem=f"{file_stem}-fallback",
         )
-    document_url = f"/static/offboarding/{result['file_name']}"
+    document_url = _signed_download_url("offboarding", result["file_name"])
     return {
         "document_url": document_url,
         "file_name": result["file_name"],
@@ -889,7 +1325,7 @@ def _generate_onboarding_document(
         result = render_offboarding_document(
             template_store=onboarding_template_store,
             template=template,
-            output_dir=STATIC_DIR / "onboarding",
+            output_dir=GENERATED_DIR / "onboarding",
             values=context["values"],
             file_stem=file_stem,
         )
@@ -900,11 +1336,11 @@ def _generate_onboarding_document(
         result = render_offboarding_document(
             template_store=onboarding_template_store,
             template=None,
-            output_dir=STATIC_DIR / "onboarding",
+            output_dir=GENERATED_DIR / "onboarding",
             values=context["values"],
             file_stem=f"{file_stem}-fallback",
         )
-    document_url = f"/static/onboarding/{result['file_name']}"
+    document_url = _signed_download_url("onboarding", result["file_name"])
     return {
         "document_url": document_url,
         "file_name": result["file_name"],
@@ -935,6 +1371,15 @@ def _select_assets_from_message(message: str, assets: list[dict[str, Any]]) -> l
 
     selected: list[dict[str, Any]] = []
     seen: set[str] = set()
+    explicit_keys = {key.upper() for key in re.findall(r"\b[A-Z]{2,10}-\d+\b", text.upper())}
+    if explicit_keys:
+        for asset in assets:
+            identity = _asset_identity(asset)
+            if identity.upper() in explicit_keys and identity not in seen:
+                selected.append(asset)
+                seen.add(identity)
+        return selected
+
     for number in re.findall(r"\b\d+\b", text_norm):
         index = int(number) - 1
         if 0 <= index < len(assets):
@@ -945,7 +1390,11 @@ def _select_assets_from_message(message: str, assets: list[dict[str, Any]]) -> l
 
     for asset in assets:
         identity = _asset_identity(asset)
-        if identity and identity.lower() in text.lower() and identity not in seen:
+        if (
+            identity
+            and re.search(rf"(?<![A-Za-z0-9]){re.escape(identity)}(?![A-Za-z0-9])", text, flags=re.IGNORECASE)
+            and identity not in seen
+        ):
             selected.append(asset)
             seen.add(identity)
             continue
@@ -984,7 +1433,7 @@ def _format_asset_choices(assets: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _offboarding_selection_prompt(user: dict[str, Any], assets: list[dict[str, Any]]) -> ChatResponse:
+def _offboarding_selection_prompt(user: dict[str, Any], assets: list[dict[str, Any]], extra_text: str = "") -> ChatResponse:
     display_name = user.get("displayName") or user.get("display_name") or "používateľ"
     message = (
         f"Našiel som tieto zariadenia pre {display_name}. Ktoré sa vracia firme?\n"
@@ -994,16 +1443,16 @@ def _offboarding_selection_prompt(user: dict[str, Any], assets: list[dict[str, A
     return ChatResponse(
         action="offboarding_select_asset",
         message=message,
-        data={
-            "pending_action": {
+        data=_pending_data(
+            {
                 "type": "offboarding_select_asset",
                 "user_identifier": display_name,
-                "extra_text": "",
+                "extra_text": extra_text,
                 "assets": assets,
             },
-            "total": len(assets),
-            "objects": assets,
-        },
+            total=len(assets),
+            objects=assets,
+        ),
     )
 
 
@@ -1090,16 +1539,16 @@ def _onboarding_selection_prompt(
     return ChatResponse(
         action="onboarding_select_asset",
         message=message,
-        data={
-            "pending_action": {
+        data=_pending_data(
+            {
                 "type": "onboarding_select_asset",
                 "recipient": recipient or "",
                 "extra_text": extra_text,
                 "assets": assets,
             },
-            "total": len(assets),
-            "objects": assets,
-        },
+            total=len(assets),
+            objects=assets,
+        ),
     )
 
 
@@ -1294,7 +1743,7 @@ def _complete_offboarding_asset_selection(pending: dict[str, Any], message: str)
                 "Napis prosim cislo zo zoznamu, Assets kluc ako CDX-4, alebo \"vsetky\".\n"
                 f"{_format_asset_choices(assets)}"
             ),
-            data={"pending_action": pending, "total": len(assets), "objects": assets},
+            data=_pending_data(pending, total=len(assets), objects=assets),
         )
 
     user_identifier = str(pending.get("user_identifier") or "").strip()
@@ -1342,7 +1791,7 @@ def _complete_onboarding_asset_selection(pending: dict[str, Any], message: str) 
                 "Napis prosim cislo zo zoznamu alebo Assets kluc ako CDX-4.\n"
                 f"{_format_asset_choices(assets)}"
             ),
-            data={"pending_action": pending, "total": len(assets), "objects": assets},
+            data=_pending_data(pending, total=len(assets), objects=assets),
         )
     if not recipient:
         next_pending = dict(pending)
@@ -1351,7 +1800,7 @@ def _complete_onboarding_asset_selection(pending: dict[str, Any], message: str) 
         return ChatResponse(
             action="onboarding_select_recipient",
             message="Komu sa ma zariadenie odovzdat? Napis meno alebo email pouzivatela.",
-            data={"pending_action": next_pending, "selected_assets": selected_assets},
+            data=_pending_data(next_pending, selected_assets=selected_assets),
         )
 
     user = _resolve_user_for_assets(recipient)
@@ -1359,14 +1808,14 @@ def _complete_onboarding_asset_selection(pending: dict[str, Any], message: str) 
         return ChatResponse(
             action="onboarding_select_recipient",
             message=f"Pouzivatela '{recipient}' som nenasiel. Napis prosim presnejsie meno alebo email.",
-            data={
-                "pending_action": {
+            data=_pending_data(
+                {
                     "type": "onboarding_select_recipient",
                     "selected_assets": selected_assets,
                     "extra_text": extra_text,
                 },
-                "selected_assets": selected_assets,
-            },
+                selected_assets=selected_assets,
+            ),
         )
 
     generated = _generate_onboarding_document(
@@ -1549,7 +1998,7 @@ def _load_service_catalog() -> list[dict[str, Any]]:
 
 
 @app.post("/tickets/create", response_model=CreateTicketResponse)
-def create_ticket(payload: CreateTicketRequest) -> CreateTicketResponse:
+def create_ticket(payload: CreateTicketRequest, api_access: dict[str, Any] = Depends(_require_api_access)) -> CreateTicketResponse:
     try:
         created = jira.create_issue(
             project_key=payload.project_key or settings.jira_project_key,
@@ -1563,7 +2012,7 @@ def create_ticket(payload: CreateTicketRequest) -> CreateTicketResponse:
 
 
 @app.post("/tickets/summarize", response_model=SummarizeTicketResponse)
-def summarize_ticket(payload: SummarizeTicketRequest) -> SummarizeTicketResponse:
+def summarize_ticket(payload: SummarizeTicketRequest, api_access: dict[str, Any] = Depends(_require_api_access)) -> SummarizeTicketResponse:
     try:
         issue = jira.get_issue(payload.issue_key)
         comments = jira.get_comments(payload.issue_key, max_results=payload.max_comments)
@@ -1578,7 +2027,7 @@ def summarize_ticket(payload: SummarizeTicketRequest) -> SummarizeTicketResponse
 
 
 @app.post("/tickets/search", response_model=SearchTicketsResponse)
-def search_tickets(payload: SearchTicketsRequest) -> SearchTicketsResponse:
+def search_tickets(payload: SearchTicketsRequest, api_access: dict[str, Any] = Depends(_require_api_access)) -> SearchTicketsResponse:
     try:
         return _search_logic(payload.query, payload.max_results)
     except JQLValidationError as exc:
@@ -1588,7 +2037,7 @@ def search_tickets(payload: SearchTicketsRequest) -> SearchTicketsResponse:
 
 
 @app.post("/tickets/assign", response_model=AssignTicketResponse)
-def assign_ticket(payload: AssignTicketRequest) -> AssignTicketResponse:
+def assign_ticket(payload: AssignTicketRequest, api_access: dict[str, Any] = Depends(_require_api_access)) -> AssignTicketResponse:
     try:
         return _assign_ticket(payload.issue_key, payload.assignee_query)
     except RuntimeError as exc:
@@ -1596,7 +2045,7 @@ def assign_ticket(payload: AssignTicketRequest) -> AssignTicketResponse:
 
 
 @app.post("/tickets/similar", response_model=SimilarTicketsResponse)
-def similar_tickets(payload: SimilarTicketsRequest) -> SimilarTicketsResponse:
+def similar_tickets(payload: SimilarTicketsRequest, api_access: dict[str, Any] = Depends(_require_api_access)) -> SimilarTicketsResponse:
     try:
         if not payload.issue_key and not payload.text:
             raise HTTPException(status_code=400, detail="Provide issue_key or text.")
@@ -1642,7 +2091,7 @@ def similar_tickets(payload: SimilarTicketsRequest) -> SimilarTicketsResponse:
 
 
 @app.post("/inc/classify-service", response_model=ClassifyIncidentResponse)
-def classify_incident_service(payload: ClassifyIncidentRequest) -> ClassifyIncidentResponse:
+def classify_incident_service(payload: ClassifyIncidentRequest, api_access: dict[str, Any] = Depends(_require_api_access)) -> ClassifyIncidentResponse:
     try:
         if not payload.issue_key and not payload.text:
             raise HTTPException(status_code=400, detail="Provide issue_key or text.")
@@ -1678,7 +2127,7 @@ def classify_incident_service(payload: ClassifyIncidentRequest) -> ClassifyIncid
 
 
 @app.post("/inc/correlate-changes", response_model=CorrelateChangesResponse)
-def correlate_changes(payload: CorrelateChangesRequest) -> CorrelateChangesResponse:
+def correlate_changes(payload: CorrelateChangesRequest, api_access: dict[str, Any] = Depends(_require_api_access)) -> CorrelateChangesResponse:
     try:
         if not payload.incident_issue_key and not payload.incident_text:
             raise HTTPException(status_code=400, detail="Provide incident_issue_key or incident_text.")
@@ -1731,7 +2180,7 @@ def correlate_changes(payload: CorrelateChangesRequest) -> CorrelateChangesRespo
 
 
 @app.post("/assets/search", response_model=AssetsQueryResponse)
-def assets_search(payload: AssetsQueryRequest) -> AssetsQueryResponse:
+def assets_search(payload: AssetsQueryRequest, api_access: dict[str, Any] = Depends(_require_api_access)) -> AssetsQueryResponse:
     try:
         return _assets_search_from_nl(payload.query, payload.max_results)
     except RuntimeError as exc:
@@ -1739,7 +2188,7 @@ def assets_search(payload: AssetsQueryRequest) -> AssetsQueryResponse:
 
 
 @app.post("/offboarding/checklist", response_model=OffboardingChecklistResponse)
-def offboarding_checklist(payload: OffboardingChecklistRequest) -> OffboardingChecklistResponse:
+def offboarding_checklist(payload: OffboardingChecklistRequest, api_access: dict[str, Any] = Depends(_require_api_access)) -> OffboardingChecklistResponse:
     try:
         user_text = payload.user_identifier.replace('"', "")
         jql = (
@@ -1781,7 +2230,7 @@ def offboarding_checklist(payload: OffboardingChecklistRequest) -> OffboardingCh
 
 
 @app.post("/offboarding/document")
-def offboarding_document(payload: OffboardingDocumentRequest) -> dict[str, Any]:
+def offboarding_document(payload: OffboardingDocumentRequest, api_access: dict[str, Any] = Depends(_require_api_access)) -> dict[str, Any]:
     try:
         return _generate_offboarding_document(
             user_identifier=payload.user_identifier,
@@ -1795,7 +2244,7 @@ def offboarding_document(payload: OffboardingDocumentRequest) -> dict[str, Any]:
 
 
 @app.post("/assets/print-protocol", response_model=AssetsPrintProtocolResponse)
-def assets_print_protocol(payload: AssetsPrintProtocolRequest) -> AssetsPrintProtocolResponse:
+def assets_print_protocol(payload: AssetsPrintProtocolRequest, api_access: dict[str, Any] = Depends(_require_api_access)) -> AssetsPrintProtocolResponse:
     try:
         workspace_id = _require_assets_workspace()
         key_match = re.search(r"\bCDX-\d+\b", payload.object_query.upper())
@@ -1916,7 +2365,7 @@ def assets_print_protocol(payload: AssetsPrintProtocolRequest) -> AssetsPrintPro
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(payload: ChatRequest) -> ChatResponse:
+def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api_access)) -> ChatResponse:
     try:
         history = payload.history or []
         history_tail = history[-12:]
@@ -1924,17 +2373,39 @@ def chat(payload: ChatRequest) -> ChatResponse:
             f"{(h.get('role') or 'unknown')}: {(h.get('content') or '')[:500]}"
             for h in history_tail
         ).strip()
-        model_input = payload.message if not history_text else f"Recent chat history:\n{history_text}\n\nUser: {payload.message}"
+        current_user = _current_user_from_payload(payload)
+        current_user_label = str(
+            (current_user or {}).get("displayName")
+            or (current_user or {}).get("emailAddress")
+            or (current_user or {}).get("accountId")
+            or ""
+        ).strip()
+        user_context = f"Current Jira user: {current_user_label}\n" if current_user_label else ""
+        model_input = (
+            f"{user_context}{payload.message}"
+            if not history_text
+            else f"{user_context}Recent chat history:\n{history_text}\n\nUser: {payload.message}"
+        )
 
-        pending = payload.pending_action or {}
+        pending = _decode_pending_action(payload.pending_action)
         if pending.get("type") == "offboarding_select_asset":
+            permission_error = _bot_permission_error(
+                action="offboarding",
+                current_user=current_user,
+                api_access=api_access,
+            )
+            if permission_error:
+                return permission_error
             return _complete_offboarding_asset_selection(pending, payload.message)
         if pending.get("type") in {"onboarding_select_asset", "onboarding_select_recipient"}:
+            permission_error = _bot_permission_error(
+                action="onboarding",
+                current_user=current_user,
+                api_access=api_access,
+            )
+            if permission_error:
+                return permission_error
             return _complete_onboarding_asset_selection(pending, payload.message)
-
-        recovered_onboarding = _recover_onboarding_pending_from_history(payload.message, payload.history)
-        if recovered_onboarding:
-            return recovered_onboarding
 
         lower_message = payload.message.lower()
         normalized_message = _normalize_lookup_text(payload.message)
@@ -1953,7 +2424,10 @@ def chat(payload: ChatRequest) -> ChatResponse:
             )
         )
         onboarding_doc_hint = bool(
-            re.search(r"\b(onboarding|nastup|novy\s+zamestnanec|novému|novemu|dostane|odovzdavaci|odovzdávací)\b", lower_message)
+            re.search(
+                r"\b(onboarding|nastup|novy\s+zamestnanec|novému|novemu|dostane|odovzdavaci|odovzdávací|pridel|priraď|prirad|assign|assigni|odovzdaj|odovzdat|odovzdať)\b",
+                lower_message,
+            )
             and re.search(r"\b(protokol|zariaden|pc|pocitac|počítač|laptop|notebook|hardware)\b", lower_message)
         )
         protocol_for_person_hint = bool(
@@ -1963,6 +2437,12 @@ def chat(payload: ChatRequest) -> ChatResponse:
         )
         asset_key_print_hint = bool(re.search(r"\b[A-Z]{2,10}-\d+\b", payload.message.upper()))
         help_hint = bool(re.search(r"\b(help|pomoc|co vies|co dokazes|what can you do|capabilities)\b", lower_message))
+        whoami_hint = bool(
+            re.search(
+                r"\b(kto som|kym som|ak[ýy] som user|aky som user|moj ucet|m[oô]j ucet|who am i|current user)\b",
+                normalized_message,
+            )
+        )
         greeting_hint = bool(re.search(r"\b(ahoj|cau|čau|halo|hello|hi|hey)\b", lower_message.strip()))
         thanks_hint = bool(re.search(r"\b(dakujem|ďakujem|thanks|thank you|thx)\b", lower_message))
         assign_hint = bool(re.search(r"\b(assign|prirad|assigni|assigned|asignuj)\b", lower_message)) and (
@@ -1983,7 +2463,7 @@ def chat(payload: ChatRequest) -> ChatResponse:
             and re.search(r"\b(ticket|tickets|tiket|tickety|tiketov|issue|issues)\b", normalized_message)
         )
         hw_person_hint = bool(re.search(r"\b(laptop|notebook|pc|computer|hardware|zariadenie|zariadenia)\b", lower_message)) and bool(
-            re.search(r"\b(ma|má|has)\b", lower_message)
+            re.search(r"\b(ma|má|mam|mám|moje|moj|môj|has)\b", lower_message)
         )
         assets_hint = "assets" in lower_message or "insight" in lower_message or "ci " in lower_message or "ci/" in lower_message
         create_count_match = re.search(r"\b(\d{1,2})\b", lower_message)
@@ -1996,7 +2476,9 @@ def chat(payload: ChatRequest) -> ChatResponse:
             default_issue_type=settings.jira_default_issue_type,
         )
         action = str(parsed.get("action", "")).lower().strip()
-        if list_users_hint:
+        if whoami_hint:
+            action = "whoami"
+        elif list_users_hint:
             action = "list_users"
         elif list_tickets_hint:
             action = "list_tickets"
@@ -2024,6 +2506,13 @@ def chat(payload: ChatRequest) -> ChatResponse:
             action = "assets_search"
 
         if pending.get("type") == "assign_all_unassigned" and yes_all_hint:
+            permission_error = _bot_permission_error(
+                action="assign_bulk",
+                current_user=current_user,
+                api_access=api_access,
+            )
+            if permission_error:
+                return permission_error
             assignee_query = str(pending.get("assignee_query") or "").strip()
             if not assignee_query:
                 raise HTTPException(status_code=400, detail="Pending assign action is missing assignee_query.")
@@ -2033,6 +2522,14 @@ def chat(payload: ChatRequest) -> ChatResponse:
                 message=f"Hotovo. Priradil som {bulk['assigned_count']} neassignovanych ticketov na {bulk['assignee_display_name']}.",
                 data=bulk,
             )
+
+        permission_error = _bot_permission_error(
+            action=action or "search",
+            current_user=current_user,
+            api_access=api_access,
+        )
+        if permission_error:
+            return permission_error
 
         if action == "create":
             summary = parsed.get("summary") or payload.message[:250]
@@ -2082,6 +2579,8 @@ def chat(payload: ChatRequest) -> ChatResponse:
                 or _extract_issue_key_from_history(payload.history)
             )
             assignee_query = _resolve_assignee_query(payload.message, parsed)
+            if re.search(r"\b(mne|mna|mňa|sebe|me|myself)\b", normalized_message):
+                assignee_query = current_user_label or assignee_query
             if not assignee_query:
                 raise HTTPException(
                     status_code=400,
@@ -2104,7 +2603,7 @@ def chat(payload: ChatRequest) -> ChatResponse:
                         "Chces, aby som mu priradil vsetky neassignovane tickety? "
                         "Napis \"vsetky\" alebo \"ano\"."
                     ),
-                    data={"pending_action": {"type": "assign_all_unassigned", "assignee_query": assignee_query}},
+                    data=_pending_data({"type": "assign_all_unassigned", "assignee_query": assignee_query}),
                 )
             assigned = _assign_ticket(issue_key, assignee_query)
             return ChatResponse(
@@ -2128,6 +2627,26 @@ def chat(payload: ChatRequest) -> ChatResponse:
             else:
                 msg = f"Ticket {issue_key} je uz uzavrety (status: {closed.get('status')})."
             return ChatResponse(action="close", message=msg, data=closed)
+
+        if action == "whoami":
+            if not current_user:
+                return ChatResponse(
+                    action="whoami",
+                    message="V Jira paneli zatiaľ nevidím identitu aktuálneho používateľa. Skús po redeployi Forge appky.",
+                    data=None,
+                )
+            return ChatResponse(
+                action="whoami",
+                message=f"Komunikuješ ako {current_user_label}.",
+                data={
+                    "current_user": {
+                        "display_name": current_user.get("displayName"),
+                        "email": current_user.get("emailAddress"),
+                        "account_id": current_user.get("accountId"),
+                        "active": current_user.get("active"),
+                    }
+                },
+            )
 
         if action == "list_users":
             users = jira.list_assignable_users(project_key=settings.jira_project_key, max_results=min(payload.max_results, 100))
@@ -2208,9 +2727,11 @@ def chat(payload: ChatRequest) -> ChatResponse:
                     action=action,
                     message="Assets funkcie su docasne nedostupne, lebo nie je nastavene ASSETS_WORKSPACE_ID alebo chybaju prava.",
                     data=None,
-                )
+            )
             query_text = parsed.get("query") or payload.message
             if action == "assets_hw":
+                if current_user_label and re.search(r"\b(mam|mám|moje|moj|môj|mne|ja|my)\b", normalized_message):
+                    query_text = current_user_label
                 user, user_assets = _assets_for_user(query_text, payload.max_results, only_hw=True)
                 if user and user_assets:
                     return ChatResponse(
@@ -2247,15 +2768,7 @@ def chat(payload: ChatRequest) -> ChatResponse:
             if _assets_enabled():
                 matched_user, user_assets = _assets_for_user(user_identifier, max_results=25, only_hw=True)
                 if matched_user and user_assets:
-                    response = _offboarding_selection_prompt(matched_user, user_assets)
-                    if response.data and isinstance(response.data.get("pending_action"), dict):
-                        response.data["pending_action"]["user_identifier"] = (
-                            matched_user.get("displayName")
-                            or matched_user.get("emailAddress")
-                            or user_identifier
-                        )
-                        response.data["pending_action"]["extra_text"] = _extract_extra_text(payload.message)
-                    return response
+                    return _offboarding_selection_prompt(matched_user, user_assets, extra_text=_extract_extra_text(payload.message))
                 if matched_user and not user_assets:
                     request_norm = _normalize_lookup_text(payload.message)
                     explicit_return = any(
@@ -2341,10 +2854,10 @@ def chat(payload: ChatRequest) -> ChatResponse:
             if not safe_name:
                 safe_name = "asset"
             file_name = f"print-protocol-{safe_name}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.txt"
-            protocol_dir = STATIC_DIR / "protocols"
+            protocol_dir = GENERATED_DIR / "protocols"
             protocol_dir.mkdir(parents=True, exist_ok=True)
             (protocol_dir / file_name).write_text(str(protocol_data.get("protocol", "")), encoding="utf-8")
-            protocol_data["protocol_url"] = f"/static/protocols/{file_name}"
+            protocol_data["protocol_url"] = _signed_download_url("protocols", file_name)
             return ChatResponse(
                 action="assets_print",
                 message="Assets print protocol ready",
@@ -2373,8 +2886,5 @@ def chat(payload: ChatRequest) -> ChatResponse:
 
 
 @app.post("/chat/widget", response_model=ChatResponse)
-def chat_widget(payload: ChatRequest, x_widget_secret: str | None = Header(default=None)) -> ChatResponse:
-    expected = settings.widget_shared_secret
-    if expected and x_widget_secret != expected:
-        raise HTTPException(status_code=401, detail="Unauthorized widget request.")
-    return chat(payload)
+def chat_widget(payload: ChatRequest, widget_access: dict[str, Any] = Depends(_require_widget_access)) -> ChatResponse:
+    return chat(payload, api_access=widget_access)

@@ -3,7 +3,7 @@ import api from "@forge/api";
 
 const resolver = new Resolver();
 
-resolver.define("sendMessage", async ({ payload }) => {
+resolver.define("sendMessage", async ({ payload, context }) => {
   const backendUrl = process.env.BOT_BACKEND_URL;
   const widgetSecret = process.env.BOT_WIDGET_SECRET || "";
   if (!backendUrl) {
@@ -20,6 +20,11 @@ resolver.define("sendMessage", async ({ payload }) => {
   if (!message) {
     return { ok: false, error: "Message is empty." };
   }
+  const currentUser = {
+    account_id: context?.accountId || null,
+    cloud_id: context?.cloudId || null,
+    module_key: context?.moduleKey || null
+  };
 
   const headers = {
     "Content-Type": "application/json"
@@ -36,6 +41,7 @@ resolver.define("sendMessage", async ({ payload }) => {
       max_results: 20,
       max_comments: 20,
       current_issue_key: issueKey,
+      current_user: currentUser,
       history,
       pending_action: pendingAction
     })

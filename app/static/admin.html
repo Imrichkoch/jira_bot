@@ -119,7 +119,7 @@
       gap: 8px;
       margin-top: 12px;
     }
-    .admin-item {
+    .admin-item, .group-item, .user-item {
       display: flex;
       justify-content: space-between;
       gap: 12px;
@@ -127,6 +127,48 @@
       border-radius: 6px;
       padding: 10px;
       background: #fafbfc;
+    }
+    .group-item {
+      display: grid;
+      gap: 10px;
+    }
+    .permission-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(170px, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .permission-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      background: #fff;
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 8px;
+      align-items: start;
+    }
+    .permission-card input {
+      width: auto;
+      margin-top: 3px;
+    }
+    .chips {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .chip {
+      border-radius: 999px;
+      background: #e9f2ff;
+      color: #0747a6;
+      padding: 4px 8px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .list {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
     }
     .template-item {
       border: 1px solid var(--border);
@@ -304,6 +346,45 @@
       </section>
 
       <section class="panel">
+        <h2>JiraBot skupiny a prava</h2>
+        <div class="muted">
+          Ak nie je vytvorena ziadna skupina, JiraBot ostava dostupny ako doteraz.
+          Ked vytvoris aspon jednu skupinu, pouzivatel musi byt v skupine s prislusnym pravom.
+        </div>
+        <div class="row" style="margin-top: 14px;">
+          <div>
+            <label for="botGroupName">Nazov skupiny</label>
+            <input id="botGroupName" placeholder="napr. Service desk agenti" />
+          </div>
+          <div>
+            <label for="botGroupDescription">Popis</label>
+            <input id="botGroupDescription" placeholder="Volitelne" />
+          </div>
+          <button id="createBotGroupButton" type="button">Vytvorit skupinu</button>
+        </div>
+        <div id="botPermissionsList" class="permission-grid"></div>
+        <div id="botGroupStatus" class="status"></div>
+        <div id="botGroupsList" class="list"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Jira pouzivatelia</h2>
+        <div class="row">
+          <div>
+            <label for="jiraUserSearch">Vyhladat pouzivatela</label>
+            <input id="jiraUserSearch" placeholder="meno, email, alebo prazdne pre assignable userov" />
+          </div>
+          <div>
+            <label for="targetBotGroup">Pridat do skupiny</label>
+            <select id="targetBotGroup"></select>
+          </div>
+          <button id="searchJiraUsersButton" type="button">Vyhladat</button>
+        </div>
+        <div id="jiraUsersStatus" class="status"></div>
+        <div id="jiraUsersList" class="list"></div>
+      </section>
+
+      <section class="panel">
         <h2>Dokumentove sablony</h2>
         <div class="muted">
           DOCX sablona pouziva placeholdery typu <code>{{employee_name}}</code>.
@@ -415,6 +496,9 @@
     let activeTemplateId = null;
     let selectedPdfFile = null;
     let modelCatalog = [];
+    let botPermissions = [];
+    let botGroups = [];
+    let editingBotGroupId = null;
 
     function token() {
       return localStorage.getItem(tokenKey) || "";
@@ -507,7 +591,7 @@
       const me = await api("/admin/api/me");
       $("currentAdmin").textContent = `Prihlaseny: ${me.admin.display_name || me.admin.username}`;
       showLoggedIn(true);
-      await Promise.all([loadSettings(), loadAdmins(), loadTemplates()]);
+      await Promise.all([loadSettings(), loadAdmins(), loadBotPermissions(), loadBotGroups(), loadTemplates()]);
     }
 
     async function loadSettings() {
@@ -564,6 +648,165 @@
         item.className = "admin-item";
         item.innerHTML = `<strong>${admin.username}</strong><span class="muted">${admin.display_name || ""}</span>`;
         $("adminsList").appendChild(item);
+      }
+    }
+
+    async function loadBotPermissions() {
+      const data = await api("/admin/api/bot-permissions");
+      botPermissions = data.permissions || [];
+      renderPermissionPicker();
+    }
+
+    function renderPermissionPicker(selected = []) {
+      const selectedSet = new Set(selected);
+      $("botPermissionsList").innerHTML = "";
+      for (const permission of botPermissions) {
+        const card = document.createElement("label");
+        card.className = "permission-card";
+        card.innerHTML = `
+          <input type="checkbox" value="${permission.id}" ${selectedSet.has(permission.id) ? "checked" : ""} />
+          <span>
+            <strong>${permission.label}</strong>
+            <span class="muted" style="display:block;">${permission.description || permission.id}</span>
+          </span>
+        `;
+        $("botPermissionsList").appendChild(card);
+      }
+    }
+
+    function selectedBotPermissions() {
+      return Array.from($("botPermissionsList").querySelectorAll("input[type='checkbox']:checked")).map((input) => input.value);
+    }
+
+    async function loadBotGroups() {
+      const data = await api("/admin/api/bot-groups");
+      botGroups = data.groups || [];
+      renderBotGroups();
+      renderTargetGroupSelect();
+    }
+
+    function renderTargetGroupSelect() {
+      $("targetBotGroup").innerHTML = "";
+      if (!botGroups.length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "Najprv vytvor skupinu";
+        $("targetBotGroup").appendChild(option);
+        return;
+      }
+      for (const group of botGroups) {
+        const option = document.createElement("option");
+        option.value = group.id;
+        option.textContent = group.name;
+        $("targetBotGroup").appendChild(option);
+      }
+    }
+
+    function permissionLabel(id) {
+      const item = botPermissions.find((permission) => permission.id === id);
+      return item ? item.label : id;
+    }
+
+    function renderBotGroups() {
+      $("botGroupsList").innerHTML = "";
+      if (!botGroups.length) {
+        $("botGroupsList").innerHTML = `<div class="muted">Zatial nie je vytvorena ziadna JiraBot skupina. Bot je teda otvoreny pre vsetkych pouzivatelov Jira panelu.</div>`;
+        return;
+      }
+      for (const group of botGroups) {
+        const item = document.createElement("div");
+        item.className = "group-item";
+        const permissions = (group.permissions || []).map((id) => `<span class="chip">${permissionLabel(id)}</span>`).join("");
+        const members = (group.members || []).map((member) => `
+          <span class="chip">
+            ${member.display_name || member.email || member.account_id}
+            <button class="secondary" type="button" data-remove-group="${group.id}" data-remove-account="${member.account_id}" style="min-height:0;padding:1px 6px;margin-left:4px;">x</button>
+          </span>
+        `).join("");
+        item.innerHTML = `
+          <div class="row" style="align-items:center;">
+            <div>
+              <strong>${group.name}</strong>
+              <div class="muted">${group.description || ""}</div>
+            </div>
+            <div class="template-actions">
+              <button class="secondary" type="button" data-edit-group="${group.id}">Upravit prava</button>
+              <button class="secondary" type="button" data-delete-group="${group.id}">Zmazat skupinu</button>
+            </div>
+          </div>
+          <div>
+            <div class="muted">Prava</div>
+            <div class="chips">${permissions || '<span class="muted">Bez prav</span>'}</div>
+          </div>
+          <div>
+            <div class="muted">Clenovia</div>
+            <div class="chips">${members || '<span class="muted">Ziadni clenovia</span>'}</div>
+          </div>
+        `;
+        item.querySelector("[data-delete-group]").addEventListener("click", async () => {
+          if (!confirm(`Zmazat skupinu ${group.name}?`)) return;
+          await api(`/admin/api/bot-groups/${group.id}`, { method: "DELETE" });
+          setStatus("botGroupStatus", "Skupina zmazana.");
+          await loadBotGroups();
+        });
+        item.querySelector("[data-edit-group]").addEventListener("click", () => {
+          editingBotGroupId = group.id;
+          $("botGroupName").value = group.name || "";
+          $("botGroupDescription").value = group.description || "";
+          renderPermissionPicker(group.permissions || []);
+          $("createBotGroupButton").textContent = "Ulozit skupinu";
+          setStatus("botGroupStatus", `Upravujes skupinu ${group.name}.`);
+        });
+        for (const button of item.querySelectorAll("[data-remove-account]")) {
+          button.addEventListener("click", async () => {
+            const groupId = button.dataset.removeGroup;
+            const accountId = button.dataset.removeAccount;
+            await api(`/admin/api/bot-groups/${groupId}/members/${encodeURIComponent(accountId)}`, { method: "DELETE" });
+            setStatus("botGroupStatus", "Pouzivatel odobraty zo skupiny.");
+            await loadBotGroups();
+          });
+        }
+        $("botGroupsList").appendChild(item);
+      }
+    }
+
+    async function searchJiraUsers() {
+      try {
+        setStatus("jiraUsersStatus", "Vyhladavam pouzivatelov...");
+        const params = new URLSearchParams({ query: $("jiraUserSearch").value.trim(), max_results: "100" });
+        const data = await api(`/admin/api/jira-users?${params.toString()}`);
+        const users = data.users || [];
+        $("jiraUsersList").innerHTML = "";
+        for (const user of users) {
+          const item = document.createElement("div");
+          item.className = "user-item";
+          item.innerHTML = `
+            <div>
+              <strong>${user.display_name || user.email || user.account_id}</strong>
+              <div class="muted">${user.email || ""}</div>
+              <div class="muted">${user.account_id}</div>
+            </div>
+            <button type="button">Pridat do skupiny</button>
+          `;
+          item.querySelector("button").addEventListener("click", async () => {
+            const groupId = $("targetBotGroup").value;
+            if (!groupId) throw new Error("Najprv vyber alebo vytvor skupinu.");
+            await api(`/admin/api/bot-groups/${groupId}/members`, {
+              method: "POST",
+              body: JSON.stringify({
+                account_id: user.account_id,
+                display_name: user.display_name,
+                email: user.email,
+              }),
+            });
+            setStatus("jiraUsersStatus", `${user.display_name || user.email} je pridany do skupiny.`);
+            await loadBotGroups();
+          });
+          $("jiraUsersList").appendChild(item);
+        }
+        setStatus("jiraUsersStatus", `Nasiel som ${users.length} pouzivatelov.`);
+      } catch (err) {
+        setStatus("jiraUsersStatus", err.message, true);
       }
     }
 
@@ -736,6 +979,37 @@
         await loadAdmins();
       } catch (err) {
         setStatus("adminStatus", err.message, true);
+      }
+    });
+
+    $("createBotGroupButton").addEventListener("click", async () => {
+      try {
+        setStatus("botGroupStatus", editingBotGroupId ? "Ukladam skupinu..." : "Vytvaram skupinu...");
+        await api(editingBotGroupId ? `/admin/api/bot-groups/${editingBotGroupId}` : "/admin/api/bot-groups", {
+          method: editingBotGroupId ? "PUT" : "POST",
+          body: JSON.stringify({
+            name: $("botGroupName").value,
+            description: $("botGroupDescription").value,
+            permissions: selectedBotPermissions(),
+          }),
+        });
+        $("botGroupName").value = "";
+        $("botGroupDescription").value = "";
+        editingBotGroupId = null;
+        $("createBotGroupButton").textContent = "Vytvorit skupinu";
+        renderPermissionPicker();
+        setStatus("botGroupStatus", "Skupina ulozena.");
+        await loadBotGroups();
+      } catch (err) {
+        setStatus("botGroupStatus", err.message, true);
+      }
+    });
+
+    $("searchJiraUsersButton").addEventListener("click", searchJiraUsers);
+    $("jiraUserSearch").addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        searchJiraUsers();
       }
     });
 

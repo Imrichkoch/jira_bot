@@ -150,6 +150,12 @@
     let currentIssueKey = null;
     let pendingAction = null;
     const conversation = [];
+    const tokenKey = "jiraBotAdminToken";
+
+    function authHeaders() {
+      const token = localStorage.getItem(tokenKey);
+      return token ? { Authorization: `Bearer ${token}` } : {};
+    }
 
     function addBubble(text, role, links = [], embeds = []) {
       const el = document.createElement("div");
@@ -289,6 +295,9 @@
 
     addBubble("Ahoj, som Jira bot. Napis, co potrebujes urobit s ticketmi.", "bot");
     addToConversation("assistant", "Ahoj, som Jira bot. Napis, co potrebujes urobit s ticketmi.");
+    if (!localStorage.getItem(tokenKey)) {
+      addBubble("Web chat je kvoli bezpecnosti zamknuty. Prihlas sa cez Admin a potom sa sem vrat. Jira panel vo Forge funguje dalej priamo cez zabezpeceny widget.", "bot");
+    }
 
     formEl.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -303,7 +312,7 @@
       try {
         const res = await fetch("/chat", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...authHeaders() },
           body: JSON.stringify({
             message,
             max_results: 20,

@@ -112,6 +112,9 @@ class JiraClient:
             return data
         return []
 
+    def get_user(self, *, account_id: str) -> dict[str, Any]:
+        return self._request("GET", "/rest/api/3/user", params={"accountId": account_id})
+
     def assign_issue(self, *, issue_key: str, account_id: str) -> None:
         self._request(
             "PUT",

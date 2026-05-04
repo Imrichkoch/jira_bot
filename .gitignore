@@ -6,4 +6,5 @@ node_modules/
 **/node_modules/
 data/
 app/static/offboarding/
+app/static/onboarding/
 app/static/protocols/

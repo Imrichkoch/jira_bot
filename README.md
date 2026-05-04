@@ -25,6 +25,7 @@ Vypln `.env`:
 - `OPENAI_BASE_URL` nechaj prazdne pre priame OpenAI volania, alebo nastav na `https://openrouter.ai/api/v1` pre OpenRouter modely
 - `OPENROUTER_SITE_URL` a `OPENROUTER_APP_NAME` su volitelne, ale odporucane pri OpenRouter
 - `ASSETS_WORKSPACE_ID` workspace ID pre Jira Assets (nutne pre Assets endpointy)
+- `WIDGET_SHARED_SECRET` dlhy nahodny secret, rovnaky ako `BOT_WIDGET_SECRET` vo Forge
 - `APP_DATA_DIR` volitelne miesto pre admin databazu a runtime nastavenia
 - `ADMIN_BOOTSTRAP_USERNAME` a `ADMIN_BOOTSTRAP_PASSWORD` volitelne pre vytvorenie prveho admina
 
@@ -38,6 +39,12 @@ Swagger UI:
 - [http://127.0.0.1:8080/docs](http://127.0.0.1:8080/docs)
 
 ## 3) Endpointy
+
+Vsetky endpointy, ktore citaju alebo menia Jira/Assets data, vyzaduju autentifikaciu:
+- admin bearer token z `/admin/api/login`: `Authorization: Bearer <token>`
+- alebo Forge/widget secret: `X-Widget-Secret: <WIDGET_SHARED_SECRET>`
+
+`/chat/widget` vzdy vyzaduje `WIDGET_SHARED_SECRET`. Verejny web chat `/` funguje po admin prihlaseni na tej istej domene.
 
 ### Chat endpoint (all-in-one)
 
@@ -204,7 +211,7 @@ Priklad:
 }
 ```
 
-Vrati URL na vygenerovany subor v `/static/offboarding/...`. Ak je v admin rozhrani aktivna DOCX/PDF sablona, pouzije ju. Ak sablona nie je nastavena, vytvori jednoduchy PDF dokument.
+Vrati kratkodoby signed download URL v `/download/offboarding/...`. Ak je v admin rozhrani aktivna DOCX/PDF sablona, pouzije ju. Ak sablona nie je nastavena, vytvori jednoduchy PDF dokument.
 
 V chat rozhrani je offboarding/protokol dvojkrokovy:
 - bot najprv najde Jira pouzivatela a jeho priradene HW Assets objekty
