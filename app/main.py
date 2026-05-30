@@ -1848,6 +1848,12 @@ def _complete_onboarding_asset_selection(pending: dict[str, Any], message: str) 
 def _friendly_error_message(error: Exception | str) -> str:
     text = str(error)
     lowered = text.lower()
+    if "access to assets api was denied" in lowered or ("status_code" in lowered and "403" in lowered and "assets" in lowered):
+        return (
+            "Jira API token funguje, ale ucet pouzity botom nema povoleny pristup do Jira Assets API. "
+            "Treba mu v Atlassian/Jira Service Management pridat Assets prava na danu schemu, napriklad Object Schema User/Manager "
+            "alebo Assets administrator podla toho, ci ma len citat alebo aj priradovat zariadenia."
+        )
     if "jql" in lowered or "reserved word" in lowered or "vyhraden" in lowered:
         return (
             "Tomuto som nerozumel ako Jira vyhľadávaniu a nechcem ti vracať technickú chybu. "
