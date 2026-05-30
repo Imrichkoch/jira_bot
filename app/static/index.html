@@ -304,6 +304,14 @@
       const message = inputEl.value.trim();
       if (!message) return;
 
+      if (!localStorage.getItem(tokenKey)) {
+        addBubble(
+          "Web chat je zamknuty. Klikni hore na Admin, prihlas sa a potom sa vrat sem. V Jira paneli bot funguje priamo cez zabezpeceny widget.",
+          "bot",
+        );
+        return;
+      }
+
       addBubble(message, "user");
       addToConversation("user", message);
       inputEl.value = "";
@@ -324,8 +332,12 @@
         });
         const data = await res.json();
         if (!res.ok) {
-          addBubble(`Error: ${data.detail || "Request failed"}`, "bot");
-          addToConversation("assistant", `Error: ${data.detail || "Request failed"}`);
+          const detail = data.detail || "Request failed";
+          const messageText = res.status === 401
+            ? "Web chat nema platne prihlasenie. Klikni na Admin, prihlas sa a skus to znova."
+            : `Error: ${detail}`;
+          addBubble(messageText, "bot");
+          addToConversation("assistant", messageText);
         } else {
           captureContextIssue(data);
           const normalized = normalizeResponse(data);
