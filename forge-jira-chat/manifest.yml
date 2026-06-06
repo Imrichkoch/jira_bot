@@ -4,6 +4,14 @@ app:
   id: ari:cloud:ecosystem::app/fce9f58d-ff9c-41be-ac46-532fa4d906dc
 
 modules:
+  jira:globalPage:
+    - key: jira-ai-chat-global
+      resource: chat-panel
+      resolver:
+        function: resolver
+      title: Jira AI Chat
+      layout: blank
+      icon: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
   jira:issuePanel:
     - key: jira-ai-chat-panel
       resource: chat-panel
