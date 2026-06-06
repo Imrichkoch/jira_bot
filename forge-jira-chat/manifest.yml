@@ -1,7 +1,7 @@
 app:
   runtime:
     name: nodejs22.x
-  id: ari:cloud:ecosystem::app/1124e232-be9d-40e9-84ca-970df72827b5
+  id: ari:cloud:ecosystem::app/fce9f58d-ff9c-41be-ac46-532fa4d906dc
 
 modules:
   jira:issuePanel:
