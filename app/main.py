@@ -2573,7 +2573,7 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
             summary = ai.summarize_issue({"issue": issue, "comments": comments.get("comments", [])})
             return ChatResponse(
                 action="summarize",
-                message=f"Summary ready for {issue_key}",
+                message=f"Zhrnutie ticketu {issue_key}:\n{summary}",
                 data={"issue_key": issue_key, "summary": summary},
             )
 
