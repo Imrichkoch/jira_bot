@@ -265,6 +265,7 @@ ACTION_PERMISSION_MAP = {
     "assign_bulk": ["tickets.assign"],
     "close": ["tickets.close"],
     "list_users": ["users.read"],
+    "offboarding_checklist": ["tickets.read"],
     "assets_search": ["assets.read"],
     "assets_owner": ["assets.read"],
     "assets_hw": ["assets.read"],
@@ -1202,6 +1203,31 @@ def _extract_offboarding_person(text: str, parsed: dict[str, Any] | None = None)
     if not cleaned or _normalize_lookup_text(cleaned) in filler_words:
         return None
     return cleaned if len(cleaned) >= 2 else None
+
+
+def _extract_offboarding_checklist_person(text: str, parsed: dict[str, Any] | None = None) -> str | None:
+    candidate = _extract_offboarding_person(text, parsed)
+    if not candidate:
+        candidate = _extract_person_after_pre(text)
+    if not candidate:
+        parsed_query = (parsed or {}).get("query")
+        candidate = parsed_query if isinstance(parsed_query, str) else None
+    if not candidate:
+        return None
+    candidate = re.split(
+        r"\b(?:podla|podľa|podla\s+pristupov|podľa\s+prístupov|pristupov|prístupov|access|jira|ticket|tiket)\b",
+        candidate,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    candidate = re.sub(
+        r"\b(?:offboarding|offboard|checklist|zoznam|pristupov|prístupov|pristupy|prístupy|pre|for)\b",
+        " ",
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    candidate = re.sub(r"\s+", " ", candidate).strip(" .,:;!?()[]{}\"'")
+    return candidate if len(candidate) >= 2 else None
 
 
 def _build_offboarding_document_context(
@@ -2419,6 +2445,10 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
         create_hint = bool(re.search(r"\b(vytvor|sprav|vyrob|create|make)\b", lower_message)) and "ticket" in lower_message
         search_hint = bool(re.search(r"\b(najdi|hladaj|search|find|list|vypis)\b", lower_message))
         summarize_hint = bool(re.search(r"\b(summary|summar|zhrn|sumariz|sprav summary)\b", lower_message))
+        offboarding_checklist_hint = bool(
+            re.search(r"\b(checklist|zoznam\s+pristup|zoznam\s+prístup|access\s+audit|audit\s+pristup|audit\s+prístup)\b", normalized_message)
+            and re.search(r"\b(offboarding|offboard|ukoncenie|ukončenie|konci|contract|pristup|prístup|access|jira)\b", normalized_message)
+        )
         offboarding_doc_hint = bool(
             re.search(
                 r"\b(offboarding|offboard|offboardovat|ofboarding|ofbord|offbord|offbordnig|offbordnigovat|ofbordnigovat|ukoncenie|ukončenie)\b",
@@ -2466,7 +2496,7 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
         )
         list_tickets_hint = bool(
             re.search(r"\b(zoznam|vypis|list|ake mame|akych mame|daj mi|ukaz)\b", normalized_message)
-            and re.search(r"\b(ticket|tickets|tiket|tickety|tiketov|issue|issues)\b", normalized_message)
+            and re.search(r"\b(ticket|tickets|ticketov|tiket|tickety|tiketov|issue|issues)\b", normalized_message)
         )
         hw_person_hint = bool(re.search(r"\b(laptop|notebook|pc|computer|hardware|zariadenie|zariadenia)\b", lower_message)) and bool(
             re.search(r"\b(ma|má|mam|mám|moje|moj|môj|has)\b", lower_message)
@@ -2488,6 +2518,8 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
             action = "list_users"
         elif list_tickets_hint:
             action = "list_tickets"
+        elif offboarding_checklist_hint:
+            action = "offboarding_checklist"
         elif onboarding_doc_hint:
             action = "onboarding"
         elif offboarding_doc_hint:
@@ -2761,6 +2793,24 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
                 action=action,
                 message=f"Assets query returned {assets_result.total} object(s)",
                 data=assets_result.model_dump(),
+            )
+
+        if action == "offboarding_checklist":
+            user_identifier = _extract_offboarding_checklist_person(payload.message, parsed)
+            if not user_identifier:
+                return ChatResponse(
+                    action="offboarding_checklist",
+                    message="Jasne. Napíš prosím meno alebo email človeka, napríklad: offboarding checklist pre Imrich Koch.",
+                    data=None,
+                )
+            checklist = offboarding_checklist(
+                OffboardingChecklistRequest(user_identifier=user_identifier),
+                api_access=api_access,
+            )
+            return ChatResponse(
+                action="offboarding_checklist",
+                message=f"Offboarding checklist pre {checklist.user_identifier}:\n{checklist.checklist}",
+                data=checklist.model_dump(),
             )
 
         if action == "offboarding":
