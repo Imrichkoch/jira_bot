@@ -264,7 +264,7 @@
     <div class="top">
       <div>
         <h1>Jira Bot Admin</h1>
-        <div class="muted">Model, system prompt, skills.md a admin ucty</div>
+        <div class="muted">Model, system prompt, skills.md, and admin accounts</div>
       </div>
       <a class="link-button" href="/">Chat</a>
     </div>
@@ -289,7 +289,7 @@
       <section class="panel">
         <div class="top">
           <div>
-            <h2>Nastavenia bota</h2>
+            <h2>Bot settings</h2>
             <div id="currentAdmin" class="muted"></div>
           </div>
           <button id="logoutButton" class="secondary" type="button">Logout</button>
@@ -305,12 +305,12 @@
           </div>
           <div>
             <label for="model">Model ID</label>
-            <input id="model" list="modelList" placeholder="napr. anthropic/claude-sonnet-4.5" />
+            <input id="model" list="modelList" placeholder="e.g. anthropic/claude-sonnet-4.5" />
             <datalist id="modelList"></datalist>
           </div>
         </div>
         <div id="modelProviderNote" class="model-note">
-          Zmena plati hned pre dalsie AI odpovede. OpenRouter modely vyzaduju OPENAI_BASE_URL=https://openrouter.ai/api/v1.
+          Changes apply immediately to the next AI responses. OpenRouter models require OPENAI_BASE_URL=https://openrouter.ai/api/v1.
         </div>
         <div style="margin-top: 14px;">
           <label for="systemPrompt">System prompt</label>
@@ -320,12 +320,12 @@
           <label for="skillsMd">skills.md</label>
           <textarea id="skillsMd" class="skills"></textarea>
         </div>
-        <button id="saveSettingsButton" type="button" style="margin-top: 12px;">Ulozit nastavenia</button>
+        <button id="saveSettingsButton" type="button" style="margin-top: 12px;">Save settings</button>
         <div id="settingsStatus" class="status"></div>
       </section>
 
       <section class="panel">
-        <h2>Admin ucty</h2>
+        <h2>Admin accounts</h2>
         <div class="row">
           <div>
             <label for="newUsername">Username</label>
@@ -339,28 +339,28 @@
             <label for="newPassword">Password</label>
             <input id="newPassword" type="password" autocomplete="new-password" />
           </div>
-          <button id="createAdminButton" type="button">Vytvorit admina</button>
+          <button id="createAdminButton" type="button">Create admin</button>
         </div>
         <div id="adminStatus" class="status"></div>
         <div id="adminsList" class="admins"></div>
       </section>
 
       <section class="panel">
-        <h2>JiraBot skupiny a prava</h2>
+        <h2>JiraBot groups and permissions</h2>
         <div class="muted">
-          Ak nie je vytvorena ziadna skupina, JiraBot ostava dostupny ako doteraz.
-          Ked vytvoris aspon jednu skupinu, pouzivatel musi byt v skupine s prislusnym pravom.
+          If no group exists, JiraBot remains available as before.
+          Once you create at least one group, a user must belong to a group with the required permission.
         </div>
         <div class="row" style="margin-top: 14px;">
           <div>
-            <label for="botGroupName">Nazov skupiny</label>
-            <input id="botGroupName" placeholder="napr. Service desk agenti" />
+            <label for="botGroupName">Group name</label>
+            <input id="botGroupName" placeholder="e.g. Service desk agents" />
           </div>
           <div>
-            <label for="botGroupDescription">Popis</label>
-            <input id="botGroupDescription" placeholder="Volitelne" />
+            <label for="botGroupDescription">Description</label>
+            <input id="botGroupDescription" placeholder="Optional" />
           </div>
-          <button id="createBotGroupButton" type="button">Vytvorit skupinu</button>
+          <button id="createBotGroupButton" type="button">Create group</button>
         </div>
         <div id="botPermissionsList" class="permission-grid"></div>
         <div id="botGroupStatus" class="status"></div>
@@ -368,40 +368,40 @@
       </section>
 
       <section class="panel">
-        <h2>Jira pouzivatelia</h2>
+        <h2>Jira users</h2>
         <div class="row">
           <div>
-            <label for="jiraUserSearch">Vyhladat pouzivatela</label>
-            <input id="jiraUserSearch" placeholder="meno, email, alebo prazdne pre assignable userov" />
+            <label for="jiraUserSearch">Search user</label>
+            <input id="jiraUserSearch" placeholder="name, email, or empty for assignable users" />
           </div>
           <div>
-            <label for="targetBotGroup">Pridat do skupiny</label>
+            <label for="targetBotGroup">Add to group</label>
             <select id="targetBotGroup"></select>
           </div>
-          <button id="searchJiraUsersButton" type="button">Vyhladat</button>
+          <button id="searchJiraUsersButton" type="button">Search</button>
         </div>
         <div id="jiraUsersStatus" class="status"></div>
         <div id="jiraUsersList" class="list"></div>
       </section>
 
       <section class="panel">
-        <h2>Dokumentove sablony</h2>
+        <h2>Document templates</h2>
         <div class="muted">
-          DOCX sablona pouziva placeholdery typu <code>{{employee_name}}</code>.
-          PDF sablona pouziva pozicie v percentach od laveho horneho rohu.
+          DOCX templates use placeholders such as <code>{{employee_name}}</code>.
+          PDF templates use positions in percentages from the top-left corner.
         </div>
 
         <div class="row" style="margin-top: 14px;">
           <div>
-            <label for="templateMode">Typ sablony</label>
+            <label for="templateMode">Template type</label>
             <select id="templateMode">
-              <option value="offboarding">Offboarding / vratenie zariadenia</option>
-              <option value="onboarding">Onboarding / odovzdanie zariadenia</option>
+              <option value="offboarding">Offboarding / device return</option>
+              <option value="onboarding">Onboarding / device handover</option>
             </select>
           </div>
           <div>
-            <label for="templateName">Nazov sablony</label>
-            <input id="templateName" placeholder="Odovzdanie notebooku" />
+            <label for="templateName">Template name</label>
+            <input id="templateName" placeholder="Laptop handover" />
           </div>
           <div>
             <label for="templateFormat">Format</label>
@@ -411,17 +411,17 @@
             </select>
           </div>
           <div>
-            <label for="templateFile">Subor</label>
+            <label for="templateFile">File</label>
             <input id="templateFile" type="file" accept=".docx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
           </div>
-          <button id="uploadTemplateButton" type="button">Pridat sablonu</button>
+          <button id="uploadTemplateButton" type="button">Add template</button>
         </div>
 
         <div style="margin-top: 14px;">
-          <label>Polia v dokumente</label>
+          <label>Document fields</label>
           <div class="field-grid">
             <div class="field-card" data-field="employee_name">
-              <label>Meno</label>
+              <label>Name</label>
               <input id="field_employee_name_placeholder" value="{{employee_name}}" />
               <input id="field_employee_name_page" value="1" />
               <input id="field_employee_name_x" value="12" />
@@ -429,7 +429,7 @@
               <input id="field_employee_name_size" value="11" />
             </div>
             <div class="field-card" data-field="device_name">
-              <label>PC / zariadenie</label>
+              <label>PC / device</label>
               <input id="field_device_name_placeholder" value="{{device_name}}" />
               <input id="field_device_name_page" value="1" />
               <input id="field_device_name_x" value="12" />
@@ -437,7 +437,7 @@
               <input id="field_device_name_size" value="11" />
             </div>
             <div class="field-card" data-field="serial_number">
-              <label>Seriove cislo</label>
+              <label>Serial number</label>
               <input id="field_serial_number_placeholder" value="{{serial_number}}" />
               <input id="field_serial_number_page" value="1" />
               <input id="field_serial_number_x" value="12" />
@@ -445,7 +445,7 @@
               <input id="field_serial_number_size" value="11" />
             </div>
             <div class="field-card" data-field="extra_text">
-              <label>Doplnujuci text</label>
+              <label>Extra text</label>
               <input id="field_extra_text_placeholder" value="{{extra_text}}" />
               <input id="field_extra_text_page" value="1" />
               <input id="field_extra_text_x" value="12" />
@@ -454,7 +454,7 @@
             </div>
           </div>
           <div class="muted" style="margin-top: 8px;">
-            Poradie inputov v kazdej karte: DOCX placeholder, PDF strana, PDF X %, PDF Y %, velkost pisma.
+            Input order in each card: DOCX placeholder, PDF page, PDF X %, PDF Y %, font size.
           </div>
         </div>
 
@@ -463,16 +463,16 @@
             <div>
               <label for="pdfClickField">PDF click-to-place</label>
               <select id="pdfClickField">
-                <option value="employee_name">Meno</option>
-                <option value="device_name">PC / zariadenie</option>
-                <option value="serial_number">Seriove cislo</option>
-                <option value="extra_text">Doplnujuci text</option>
+                <option value="employee_name">Name</option>
+                <option value="device_name">PC / device</option>
+                <option value="serial_number">Serial number</option>
+                <option value="extra_text">Extra text</option>
               </select>
             </div>
             <button id="togglePdfPlaceButton" class="secondary" type="button">Zapnut oznacenie pozicie</button>
           </div>
           <div class="muted" style="margin-top: 8px;">
-            PDF normalne scrolluje. Ked chces ulozit poziciu pola, zapni oznacenie a klikni do dokumentu.
+            The PDF scrolls normally. To save a field position, enable placement mode and click inside the document.
           </div>
           <div id="pdfPreviewWrap" class="pdf-preview-wrap hidden">
             <embed id="pdfPreview" type="application/pdf" />
@@ -543,7 +543,7 @@
 
     async function renderPdfPreview(file) {
       if (!window.pdfjsLib) {
-        setStatus("templateStatus", "PDF nahlad sa nepodarilo nacitat. Skus obnovit stranku.", true);
+        setStatus("templateStatus", "PDF preview could not be loaded. Try refreshing the page.", true);
         return;
       }
       pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
@@ -637,7 +637,7 @@
       const hasCurrent = Array.from($("modelPreset").options).some((option) => option.value === currentModel);
       const customOption = Array.from($("modelPreset").options).find((option) => option.value === "custom");
       $("modelPreset").value = hasCurrent ? currentModel : (customOption ? "custom" : (($("modelPreset").options[0] || {}).value || ""));
-      $("modelProviderNote").textContent = group.note || "Zmena plati hned pre dalsie AI odpovede.";
+      $("modelProviderNote").textContent = group.note || "Changes apply immediately to the next AI responses.";
     }
 
     async function loadAdmins() {
@@ -690,7 +690,7 @@
       if (!botGroups.length) {
         const option = document.createElement("option");
         option.value = "";
-        option.textContent = "Najprv vytvor skupinu";
+        option.textContent = "Create a group first";
         $("targetBotGroup").appendChild(option);
         return;
       }
@@ -710,7 +710,7 @@
     function renderBotGroups() {
       $("botGroupsList").innerHTML = "";
       if (!botGroups.length) {
-        $("botGroupsList").innerHTML = `<div class="muted">Zatial nie je vytvorena ziadna JiraBot skupina. Bot je teda otvoreny pre vsetkych pouzivatelov Jira panelu.</div>`;
+        $("botGroupsList").innerHTML = `<div class="muted">No JiraBot group has been created yet. The bot is open to all Jira panel users.</div>`;
         return;
       }
       for (const group of botGroups) {
@@ -730,23 +730,23 @@
               <div class="muted">${group.description || ""}</div>
             </div>
             <div class="template-actions">
-              <button class="secondary" type="button" data-edit-group="${group.id}">Upravit prava</button>
-              <button class="secondary" type="button" data-delete-group="${group.id}">Zmazat skupinu</button>
+              <button class="secondary" type="button" data-edit-group="${group.id}">Edit permissions</button>
+              <button class="secondary" type="button" data-delete-group="${group.id}">Delete group</button>
             </div>
           </div>
           <div>
-            <div class="muted">Prava</div>
-            <div class="chips">${permissions || '<span class="muted">Bez prav</span>'}</div>
+            <div class="muted">Permissions</div>
+            <div class="chips">${permissions || '<span class="muted">No permissions</span>'}</div>
           </div>
           <div>
-            <div class="muted">Clenovia</div>
-            <div class="chips">${members || '<span class="muted">Ziadni clenovia</span>'}</div>
+            <div class="muted">Members</div>
+            <div class="chips">${members || '<span class="muted">No members</span>'}</div>
           </div>
         `;
         item.querySelector("[data-delete-group]").addEventListener("click", async () => {
-          if (!confirm(`Zmazat skupinu ${group.name}?`)) return;
+          if (!confirm(`Delete group ${group.name}?`)) return;
           await api(`/admin/api/bot-groups/${group.id}`, { method: "DELETE" });
-          setStatus("botGroupStatus", "Skupina zmazana.");
+          setStatus("botGroupStatus", "Group deleted.");
           await loadBotGroups();
         });
         item.querySelector("[data-edit-group]").addEventListener("click", () => {
@@ -754,15 +754,15 @@
           $("botGroupName").value = group.name || "";
           $("botGroupDescription").value = group.description || "";
           renderPermissionPicker(group.permissions || []);
-          $("createBotGroupButton").textContent = "Ulozit skupinu";
-          setStatus("botGroupStatus", `Upravujes skupinu ${group.name}.`);
+          $("createBotGroupButton").textContent = "Save group";
+          setStatus("botGroupStatus", `Editing group ${group.name}.`);
         });
         for (const button of item.querySelectorAll("[data-remove-account]")) {
           button.addEventListener("click", async () => {
             const groupId = button.dataset.removeGroup;
             const accountId = button.dataset.removeAccount;
             await api(`/admin/api/bot-groups/${groupId}/members/${encodeURIComponent(accountId)}`, { method: "DELETE" });
-            setStatus("botGroupStatus", "Pouzivatel odobraty zo skupiny.");
+            setStatus("botGroupStatus", "User removed from group.");
             await loadBotGroups();
           });
         }
@@ -772,7 +772,7 @@
 
     async function searchJiraUsers() {
       try {
-        setStatus("jiraUsersStatus", "Vyhladavam pouzivatelov...");
+        setStatus("jiraUsersStatus", "Searching users...");
         const params = new URLSearchParams({ query: $("jiraUserSearch").value.trim(), max_results: "100" });
         const data = await api(`/admin/api/jira-users?${params.toString()}`);
         const users = data.users || [];
@@ -786,11 +786,11 @@
               <div class="muted">${user.email || ""}</div>
               <div class="muted">${user.account_id}</div>
             </div>
-            <button type="button">Pridat do skupiny</button>
+            <button type="button">Add to group</button>
           `;
           item.querySelector("button").addEventListener("click", async () => {
             const groupId = $("targetBotGroup").value;
-            if (!groupId) throw new Error("Najprv vyber alebo vytvor skupinu.");
+            if (!groupId) throw new Error("Select or create a group first.");
             await api(`/admin/api/bot-groups/${groupId}/members`, {
               method: "POST",
               body: JSON.stringify({
@@ -799,12 +799,12 @@
                 email: user.email,
               }),
             });
-            setStatus("jiraUsersStatus", `${user.display_name || user.email} je pridany do skupiny.`);
+            setStatus("jiraUsersStatus", `${user.display_name || user.email} was added to the group.`);
             await loadBotGroups();
           });
           $("jiraUsersList").appendChild(item);
         }
-        setStatus("jiraUsersStatus", `Nasiel som ${users.length} pouzivatelov.`);
+        setStatus("jiraUsersStatus", `Found ${users.length} user(s).`);
       } catch (err) {
         setStatus("jiraUsersStatus", err.message, true);
       }
@@ -854,7 +854,7 @@
         const activate = document.createElement("button");
         activate.type = "button";
         activate.className = "secondary";
-        activate.textContent = "Nastavit ako aktivnu";
+        activate.textContent = "Set as active";
         activate.disabled = Boolean(template.active);
         activate.addEventListener("click", async () => {
           await api(`/admin/api/${templateMode}-templates/${template.id}/active`, { method: "PUT" });
@@ -867,27 +867,27 @@
         loadFields.addEventListener("click", () => {
           activeTemplateId = template.id;
           applyTemplateFields(template.fields || {});
-          setStatus("templateStatus", `Pozicie zo sablony ${template.name} su nacitane do formulara.`);
+          setStatus("templateStatus", `Positions from template ${template.name} were loaded into the form.`);
         });
         const saveFields = document.createElement("button");
         saveFields.type = "button";
         saveFields.className = "secondary";
-        saveFields.textContent = "Ulozit pozicie";
+        saveFields.textContent = "Save positions";
         saveFields.addEventListener("click", async () => {
           await api(`/admin/api/${templateMode}-templates/${template.id}/fields`, {
             method: "PUT",
             body: JSON.stringify(collectTemplateFields()),
           });
           activeTemplateId = template.id;
-          setStatus("templateStatus", `Pozicie pre ${template.name} su ulozene.`);
+          setStatus("templateStatus", `Positions for ${template.name} were saved.`);
           await loadTemplates();
         });
         const remove = document.createElement("button");
         remove.type = "button";
         remove.className = "secondary";
-        remove.textContent = "Zmazat";
+        remove.textContent = "Delete";
         remove.addEventListener("click", async () => {
-          if (!confirm(`Zmazat sablonu ${template.name}?`)) return;
+          if (!confirm(`Delete template ${template.name}?`)) return;
           await api(`/admin/api/${templateMode}-templates/${template.id}`, { method: "DELETE" });
           await loadTemplates();
         });
@@ -957,7 +957,7 @@
             skills_md: $("skillsMd").value,
           }),
         });
-        setStatus("settingsStatus", "Ulozene.");
+        setStatus("settingsStatus", "Saved.");
       } catch (err) {
         setStatus("settingsStatus", err.message, true);
       }
@@ -975,7 +975,7 @@
           }),
         });
         $("newPassword").value = "";
-        setStatus("adminStatus", "Admin vytvoreny.");
+        setStatus("adminStatus", "Admin created.");
         await loadAdmins();
       } catch (err) {
         setStatus("adminStatus", err.message, true);
@@ -984,7 +984,7 @@
 
     $("createBotGroupButton").addEventListener("click", async () => {
       try {
-        setStatus("botGroupStatus", editingBotGroupId ? "Ukladam skupinu..." : "Vytvaram skupinu...");
+        setStatus("botGroupStatus", editingBotGroupId ? "Saving group..." : "Creating group...");
         await api(editingBotGroupId ? `/admin/api/bot-groups/${editingBotGroupId}` : "/admin/api/bot-groups", {
           method: editingBotGroupId ? "PUT" : "POST",
           body: JSON.stringify({
@@ -996,9 +996,9 @@
         $("botGroupName").value = "";
         $("botGroupDescription").value = "";
         editingBotGroupId = null;
-        $("createBotGroupButton").textContent = "Vytvorit skupinu";
+        $("createBotGroupButton").textContent = "Create group";
         renderPermissionPicker();
-        setStatus("botGroupStatus", "Skupina ulozena.");
+        setStatus("botGroupStatus", "Group saved.");
         await loadBotGroups();
       } catch (err) {
         setStatus("botGroupStatus", err.message, true);
@@ -1043,21 +1043,21 @@
 
     $("togglePdfPlaceButton").addEventListener("click", () => {
       if ($("pdfPreviewWrap").classList.contains("hidden")) {
-        setStatus("templateStatus", "Najprv vyber PDF subor.", true);
+        setStatus("templateStatus", "Choose a PDF file first.", true);
         return;
       }
       setPdfPlacing(!pdfPlacing);
       setStatus(
         "templateStatus",
-        pdfPlacing ? "Klikni do PDF dokumentu na miesto, kam sa ma vlozit vybrane pole." : ""
+        pdfPlacing ? "Click inside the PDF where the selected field should be inserted." : ""
       );
     });
 
     $("uploadTemplateButton").addEventListener("click", async () => {
       try {
         const file = $("templateFile").files[0];
-        if (!file) throw new Error("Vyber DOCX alebo PDF subor.");
-        setStatus("templateStatus", "Nahravam sablonu...");
+        if (!file) throw new Error("Choose a DOCX or PDF file.");
+        setStatus("templateStatus", "Uploading template...");
         const content = await fileToBase64(file);
         await api(`/admin/api/${templateMode}-templates`, {
           method: "POST",
@@ -1076,7 +1076,7 @@
         $("pdfPreviewWrap").innerHTML = "";
         $("pdfPreviewWrap").classList.add("hidden");
         setPdfPlacing(false);
-        setStatus("templateStatus", "Sablona je ulozena a nastavena ako aktivna.");
+        setStatus("templateStatus", "Template saved and activated.");
         await loadTemplates();
       } catch (err) {
         setStatus("templateStatus", err.message, true);

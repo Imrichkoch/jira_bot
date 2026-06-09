@@ -1,10 +1,11 @@
 # Jira AI Ticket Bot (FastAPI)
 
-Minimal backend bot, ktory vie:
-- vytvorit ticket v Jira
-- spravit AI summary z existujuceho ticketu
-- vyhladavat podla prirodzeneho textu (AI prelozi text na JQL)
-- admin rozhranie pre spravu adminov, AI modelu, system promptu a `skills.md`
+A minimal backend bot that can:
+- create Jira tickets
+- generate AI summaries for existing tickets
+- search Jira from natural-language text by converting it to JQL
+- manage admin users, AI model selection, system prompts, and `skills.md`
+- work with Jira Assets and generate handover/offboarding documents
 
 ## 1) Setup
 
@@ -16,20 +17,20 @@ pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-Vypln `.env`:
-- `JIRA_BASE_URL` napr. `https://imrichkoch.atlassian.net`
-- `JIRA_EMAIL` tvoj Atlassian login email
-- `JIRA_API_TOKEN` Atlassian API token
-- `JIRA_PROJECT_KEY` napr. `KAN`
-- `OPENAI_API_KEY` tvoj AI API kluc
-- `OPENAI_BASE_URL` nechaj prazdne pre priame OpenAI volania, alebo nastav na `https://openrouter.ai/api/v1` pre OpenRouter modely
-- `OPENROUTER_SITE_URL` a `OPENROUTER_APP_NAME` su volitelne, ale odporucane pri OpenRouter
-- `ASSETS_WORKSPACE_ID` workspace ID pre Jira Assets (nutne pre Assets endpointy)
-- `WIDGET_SHARED_SECRET` dlhy nahodny secret, rovnaky ako `BOT_WIDGET_SECRET` vo Forge
-- `APP_DATA_DIR` volitelne miesto pre admin databazu a runtime nastavenia
-- `ADMIN_BOOTSTRAP_USERNAME` a `ADMIN_BOOTSTRAP_PASSWORD` volitelne pre vytvorenie prveho admina
+Fill in `.env`:
+- `JIRA_BASE_URL`, for example `https://your-site.atlassian.net`
+- `JIRA_EMAIL`, your Atlassian login email
+- `JIRA_API_TOKEN`, your Atlassian API token
+- `JIRA_PROJECT_KEY`, for example `KAN`
+- `OPENAI_API_KEY`, your AI API key
+- `OPENAI_BASE_URL`, leave empty for direct OpenAI calls or set to `https://openrouter.ai/api/v1` for OpenRouter models
+- `OPENROUTER_SITE_URL` and `OPENROUTER_APP_NAME`, optional but recommended for OpenRouter
+- `ASSETS_WORKSPACE_ID`, the Jira Assets workspace ID required for Assets endpoints
+- `WIDGET_SHARED_SECRET`, a long random secret that must match `BOT_WIDGET_SECRET` in Forge
+- `APP_DATA_DIR`, optional location for the admin database and runtime settings
+- `ADMIN_BOOTSTRAP_USERNAME` and `ADMIN_BOOTSTRAP_PASSWORD`, optional bootstrap values for creating the first admin
 
-## 2) Spustenie
+## 2) Run Locally
 
 ```powershell
 uvicorn app.main:app --reload --port 8080
@@ -38,22 +39,22 @@ uvicorn app.main:app --reload --port 8080
 Swagger UI:
 - [http://127.0.0.1:8080/docs](http://127.0.0.1:8080/docs)
 
-## 3) Endpointy
+## 3) Endpoints
 
-Vsetky endpointy, ktore citaju alebo menia Jira/Assets data, vyzaduju autentifikaciu:
-- admin bearer token z `/admin/api/login`: `Authorization: Bearer <token>`
-- alebo Forge/widget secret: `X-Widget-Secret: <WIDGET_SHARED_SECRET>`
+All endpoints that read or modify Jira/Assets data require authentication:
+- admin bearer token from `/admin/api/login`: `Authorization: Bearer <token>`
+- or Forge/widget secret: `X-Widget-Secret: <WIDGET_SHARED_SECRET>`
 
-`/chat/widget` vzdy vyzaduje `WIDGET_SHARED_SECRET`. Verejny web chat `/` funguje po admin prihlaseni na tej istej domene.
+`/chat/widget` always requires `WIDGET_SHARED_SECRET`. The public web chat `/` works after admin login on the same domain.
 
-### Chat endpoint (all-in-one)
+### Chat Endpoint (All-In-One)
 
 `POST /chat`
 
-Priklady body:
+Example bodies:
 ```json
 {
-  "message": "Vytvor ticket: Login pada po deployi, users dostavaju 500",
+  "message": "Create ticket: Login fails after deploy, users get 500",
   "max_results": 20,
   "max_comments": 20
 }
@@ -61,34 +62,34 @@ Priklady body:
 
 ```json
 {
-  "message": "Sprav summary pre KAN-1"
+  "message": "Summarize KAN-1"
 }
 ```
 
 ```json
 {
-  "message": "Najdi otvorene tickety o login probleme za posledne 2 tyzdne"
+  "message": "Find open tickets about login problems from the last 2 weeks"
 }
 ```
 
-### Create ticket
+### Create Ticket
 
 `POST /tickets/create`
 
-Priklad body:
+Example body:
 ```json
 {
-  "summary": "Padanie loginu po deployi",
-  "description": "Po release 1.2.4 pada prihlasenie pre cast userov.",
+  "summary": "Login failure after deploy",
+  "description": "After release 1.2.4, login fails for some users.",
   "issue_type": "Task"
 }
 ```
 
-### Assign ticket
+### Assign Ticket
 
 `POST /tickets/assign`
 
-Priklad body:
+Example body:
 ```json
 {
   "issue_key": "KAN-12",
@@ -96,11 +97,11 @@ Priklad body:
 }
 ```
 
-### Summarize ticket
+### Summarize Ticket
 
 `POST /tickets/summarize`
 
-Priklad body:
+Example body:
 ```json
 {
   "issue_key": "KAN-1",
@@ -108,28 +109,28 @@ Priklad body:
 }
 ```
 
-### Search by text
+### Search By Text
 
 `POST /tickets/search`
 
-Priklad body:
+Example body:
 ```json
 {
-  "query": "Najdi otvorene tickety o login probleme za posledne 2 tyzdne",
+  "query": "Find open tickets about login problems from the last 2 weeks",
   "max_results": 20
 }
 ```
 
-Response vracia:
-- AI vygenerovane JQL (`jql`)
+The response returns:
+- AI-generated JQL (`jql`)
 - `total`
-- zjednoduseny zoznam issue
+- simplified issue list
 
-### Similar/identical tickets
+### Similar/Identical Tickets
 
 `POST /tickets/similar`
 
-Priklad:
+Example:
 ```json
 {
   "issue_key": "KAN-1",
@@ -137,7 +138,7 @@ Priklad:
 }
 ```
 
-alebo:
+or:
 ```json
 {
   "text": "login fails after deploy with 500",
@@ -145,11 +146,11 @@ alebo:
 }
 ```
 
-### Assigning services to INC
+### Assigning Services To Incidents
 
 `POST /inc/classify-service`
 
-Priklad:
+Example:
 ```json
 {
   "issue_key": "KAN-4",
@@ -157,13 +158,13 @@ Priklad:
 }
 ```
 
-Service mapping sa cita zo suboru `service_catalog.json` (name + keywords).
+Service mapping is read from `service_catalog.json` (`name` + `keywords`).
 
-### Correlations between INC / Patch / Deploy
+### Correlations Between Incidents / Patches / Deploys
 
 `POST /inc/correlate-changes`
 
-Priklad:
+Example:
 ```json
 {
   "incident_issue_key": "KAN-4",
@@ -172,25 +173,25 @@ Priklad:
 }
 ```
 
-### Assets natural-language search (owner/HW/job-file/DORA/SLA)
+### Assets Natural-Language Search (Owner/HW/Job-File/DORA/SLA)
 
 `POST /assets/search`
 
-Priklad:
+Example:
 ```json
 {
-  "query": "kto je owner service payroll-api",
+  "query": "who owns the payroll-api service",
   "max_results": 20
 }
 ```
 
-Poznamka: endpoint AI preklada text na AQL a robi query v Assets.
+Note: the endpoint converts natural language to AQL and queries Jira Assets.
 
-### End of Contract - access checklist from Jira tickets
+### End Of Contract - Access Checklist From Jira Tickets
 
 `POST /offboarding/checklist`
 
-Priklad:
+Example:
 ```json
 {
   "user_identifier": "john.doe@company.com",
@@ -199,100 +200,100 @@ Priklad:
 }
 ```
 
-### Offboarding document from template
+### Offboarding Document From Template
 
 `POST /offboarding/document`
 
-Priklad:
+Example:
 ```json
 {
   "user_identifier": "imrich koch",
-  "extra_text": "Vratit notebook, nabijacku a dokovaciu stanicu."
+  "extra_text": "Return the laptop, charger, and docking station."
 }
 ```
 
-Vrati kratkodoby signed download URL v `/download/offboarding/...`. Ak je v admin rozhrani aktivna DOCX/PDF sablona, pouzije ju. Ak sablona nie je nastavena, vytvori jednoduchy PDF dokument.
+Returns a short-lived signed download URL under `/download/offboarding/...`. If an active DOCX/PDF template is configured in the admin UI, it is used. If no template is configured, the bot creates a simple fallback PDF document.
 
-V chat rozhrani je offboarding/protokol dvojkrokovy:
-- bot najprv najde Jira pouzivatela a jeho priradene HW Assets objekty
-- opyta sa, ktore zariadenie sa odovzdava
-- po vybere cislom, Assets klucom alebo textom vygeneruje dokument z aktivnej sablony
-- po vygenerovani dokumentu sa pokusi vycistit volitelny editable assignment atribut v Assets, napr. `Assigned user`
+In the chat UI, offboarding/return protocol is a two-step flow:
+- the bot first finds the Jira user and their assigned hardware Assets objects
+- it asks which device is being returned
+- after selection by number, Assets key, or text, it generates a document from the active template
+- after document generation, it tries to clear the optional editable assignment attribute in Assets, for example `Assigned user`
 
-Onboarding / odovzdavaci protokol funguje podobne:
-- bot najprv ponukne volne HW zariadenia z Assets
-- ak ziadne volne zariadenie nenajde, ukaze aj aktualne priradene zariadenia s upozornenim, ze vyber prepise priradenie
-- pouzivatel vyberie zariadenie a doplni meno/email cloveka, ktory ho dostane
-- bot vygeneruje dokument z aktivnej onboarding sablony
-- po vygenerovani dokumentu sa pokusi zapisat pouzivatela do editable assignment atributu v Assets, napr. `Assigned user`
+Onboarding / handover protocol works similarly:
+- the bot first offers available hardware devices from Assets
+- if no free device is found, it also shows currently assigned devices with a warning that selecting one will overwrite the assignment
+- the user selects a device and provides the name/email of the recipient
+- the bot generates a document from the active onboarding template
+- after document generation, it tries to write the user into an editable assignment attribute in Assets, for example `Assigned user`
 
-### Print protocol in Jira Assets (odovzdavaci protokol)
+### Print Protocol In Jira Assets
 
 `POST /assets/print-protocol`
 
-Priklad:
+Example:
 ```json
 {
   "object_query": "notebook imrich koch"
 }
 ```
 
-Vrati markdown protokol s atributmi objektu.
+Returns a markdown protocol with object attributes.
 
-## 4) Admin rozhranie
+## 4) Admin UI
 
-Admin UI bezi na:
+Admin UI is available at:
 - `/admin`
 
-Admin vie:
-- vytvarat dalsich adminov
-- vybrat AI model pre dalsie odpovede bota z vacsieho katalogu providerov
-- pouzit OpenAI modely priamo alebo OpenRouter model ID pre Anthropic, Google, DeepSeek, Meta/Llama, Mistral, Qwen, xAI a dalsie
-- pri OpenRouter/custom `OPENAI_BASE_URL` backend pouziva OpenAI-compatible Chat Completions API
-- menit system prompt
-- menit `skills.md`, ktory sa priklada k AI instrukciam
-- pridavat onboarding/offboarding sablony vo formate DOCX/PDF
-- nastavit DOCX placeholdery a PDF pozicie pre meno, PC, seriove cislo a doplnujuci text
+Admins can:
+- create additional admins
+- choose the AI model for future bot responses from a larger provider catalog
+- use OpenAI models directly or OpenRouter model IDs for Anthropic, Google, DeepSeek, Meta/Llama, Mistral, Qwen, xAI, and others
+- use OpenAI-compatible Chat Completions via OpenRouter/custom `OPENAI_BASE_URL`
+- edit the system prompt
+- edit `skills.md`, which is included in AI instructions
+- upload onboarding/offboarding templates in DOCX/PDF format
+- configure DOCX placeholders and PDF positions for employee name, PC/device, serial number, and extra text
 
-Prvy admin sa da bootstrapnut cez env premenne:
+The first admin can be bootstrapped through environment variables:
 - `ADMIN_BOOTSTRAP_USERNAME`
 - `ADMIN_BOOTSTRAP_PASSWORD`
 
-Po vytvoreni prveho admina je vhodne bootstrap hodnoty z env suboru odstranit a restartovat sluzbu. Existujuci admin zostane ulozeny v SQLite databaze.
+After creating the first admin, remove the bootstrap values from the env file and restart the service. The existing admin remains stored in the SQLite database.
 
-Runtime data sa ukladaju do `data/` alebo do cesty z `APP_DATA_DIR`:
-- `admin.sqlite3` obsahuje admin ucty, zahashovane hesla a session tokeny
-- `bot_settings.json` obsahuje aktualny model a system prompt
-- `skills.md` obsahuje editable instrukcie/schopnosti bota
-- `offboarding_templates/` obsahuje metadata a nahrate offboarding sablony
+Runtime data is stored in `data/` or in the path configured via `APP_DATA_DIR`:
+- `admin.sqlite3` contains admin accounts, hashed passwords, and session tokens
+- `bot_settings.json` contains the current model and system prompt
+- `skills.md` contains editable bot instructions/capabilities
+- `offboarding_templates/` contains metadata and uploaded offboarding templates
 
-`data/` je v `.gitignore`, aby sa do GitHubu nedostali hesla, tokeny, session ani produkcne nastavenia.
+`data/` is in `.gitignore` to keep passwords, tokens, sessions, and production settings out of GitHub.
 
-Poznamka k `skills.md`: sluzi ako prakticka vrstva instrukcii pre Jira bota. Admin moze menit spravanie bota bez deployu, napriklad styl odpovedi, pravidla pre Jira tickety alebo sposob, ako ma interpretovat poziadavky v chate.
+Note about `skills.md`: it acts as a practical instruction layer for the Jira bot. Admins can change bot behavior without redeploying, for example response style, Jira ticket rules, or how chat requests should be interpreted.
 
-## 5) Poznamky k bezpecnosti
+## 5) Security Notes
 
-- API tokeny drzat iba v `.env` (nikdy necommitovat).
-- Admin hesla su ukladane hashovane, nie ako plaintext.
-- Admin session token sa uklada v browseri do `localStorage`, preto admin rozhranie pouzivaj iba cez HTTPS.
-- Verejne API endpointy maju stale rovnake spravanie ako doteraz; ak ich budes chciet uzamknut, doplnime API key/JWT aj pre `/chat` a Jira endpointy.
-- Ak AI vrati divne JQL, `jql_guard.py` ho vie odmietnut.
+- Keep API tokens only in `.env`; never commit them.
+- Admin passwords are stored as hashes, not plaintext.
+- The admin session token is stored in browser `localStorage`, so use the admin UI only over HTTPS.
+- Public API endpoints require either an admin session/bearer token or the Forge widget secret.
+- If AI returns invalid JQL, `jql_guard.py` can reject it.
 
-## 6) Dalsie rozsirenia
+## 6) Future Extensions
 
 - `/tickets/update` endpoint
-- deduplikacia pri create (podla fingerprintu)
-- Slack/Teams chat vrstva nad tymto API
+- create deduplication by fingerprint
+- Slack/Teams chat layer on top of this API
 
-## 7) Chat widget v Jira (Forge)
+## 7) Jira Chat Widget (Forge)
 
-Endpoint pre Forge widget:
+Endpoint for the Forge widget:
 - `POST /chat/widget`
-- pouziva rovnaku logiku ako `/chat`
-- ak je nastavene `WIDGET_SHARED_SECRET`, vyzaduje hlavicku `x-widget-secret`
+- uses the same logic as `/chat`
+- requires the `x-widget-secret` header when `WIDGET_SHARED_SECRET` is configured
 
-Forge app skeleton je v:
+Forge app skeleton is in:
 - `forge-jira-chat`
 
-Nasadenie je popisane v:
+Deployment is described in:
 - `forge-jira-chat/README.md`

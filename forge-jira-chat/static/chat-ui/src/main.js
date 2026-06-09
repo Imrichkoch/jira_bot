@@ -46,7 +46,7 @@ function addToConversation(role, content) {
 function normalizeResponse(data) {
   if (!data) return "No response.";
   if (data.action === "error") {
-    return data.message || "Nieco sa nepodarilo. Skus to prosim este raz.";
+    return data.message || "Something went wrong. Please try again.";
   }
   if (data.action === "assets_print" && data.data?.protocol) {
     return data.data.protocol;
@@ -93,7 +93,7 @@ function normalizeResponse(data) {
         }
       }
     } else {
-      lines.push("Nenasiel som ziadne konkretne assety pre tento dotaz.");
+      lines.push("I did not find any concrete assets for this query.");
     }
     return lines.join("\n");
   }
@@ -101,15 +101,15 @@ function normalizeResponse(data) {
   const lines = [];
   lines.push(data.message || "Done.");
   if ((data.action === "offboarding" || data.action === "onboarding") && data.data?.document_url) {
-    if (data.data?.template?.name) lines.push(`Sablona: ${data.data.template.name}`);
+    if (data.data?.template?.name) lines.push(`Template: ${data.data.template.name}`);
     if (data.data?.format) lines.push(`Format: ${data.data.format}`);
-    if (Array.isArray(data.data?.assets)) lines.push(`Zariadenia: ${data.data.assets.length}`);
-    if (Array.isArray(data.data?.selected_assets)) lines.push(`Vybrane zariadenia: ${data.data.selected_assets.length}`);
-    if (Array.isArray(data.data?.assigned_assets)) lines.push(`Priradene v Assets: ${data.data.assigned_assets.length}`);
+    if (Array.isArray(data.data?.assets)) lines.push(`Devices: ${data.data.assets.length}`);
+    if (Array.isArray(data.data?.selected_assets)) lines.push(`Selected devices: ${data.data.selected_assets.length}`);
+    if (Array.isArray(data.data?.assigned_assets)) lines.push(`Assigned in Assets: ${data.data.assigned_assets.length}`);
     if (Array.isArray(data.data?.assign_errors) && data.data.assign_errors.length) {
-      lines.push(`Chyby priradenia: ${data.data.assign_errors.length}`);
+      lines.push(`Assignment errors: ${data.data.assign_errors.length}`);
     }
-    lines.push(`Subor: ${data.data.document_url}`);
+    lines.push(`File: ${data.data.document_url}`);
     return lines.join("\n");
   }
   if (data.data?.summary) lines.push(`\n${data.data.summary}`);
@@ -144,11 +144,11 @@ function responseLinks(data) {
   if (data?.data?.document_url) {
     links.push({
       href: data.data.document_url,
-      label: `Stiahnut ${data.data.file_name || "dokument"}`
+      label: `Download ${data.data.file_name || "document"}`
     });
   }
   if (data?.data?.protocol_url) {
-    links.push({ href: data.data.protocol_url, label: "Stiahnut protokol" });
+    links.push({ href: data.data.protocol_url, label: "Download protocol" });
   }
   return links;
 }
@@ -163,7 +163,7 @@ async function boot() {
       addToConversation(item.role === "user" ? "user" : "assistant", item.content || "");
     }
   } else {
-    const hello = "Ahoj, som Jira bot v Jira paneli. Napis poziadavku.";
+    const hello = "Hi, I am Jira bot in the Jira panel. Send a request.";
     addBubble(hello, "bot");
     addToConversation("assistant", hello);
   }

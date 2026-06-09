@@ -132,12 +132,12 @@
   <main class="app">
     <header class="header">
       <div class="title">Jira AI Chat Bot</div>
-      <div class="hint">Try: "Najdi otvorene tickety" alebo "Sprav summary pre KAN-1"</div>
+      <div class="hint">Try: "Find open tickets" or "Summarize KAN-1"</div>
       <a class="admin-link" href="/admin">Admin</a>
     </header>
     <section class="chat" id="chat"></section>
     <form class="composer" id="form">
-      <textarea id="input" placeholder="Napíš správu..." required></textarea>
+      <textarea id="input" placeholder="Type a message..." required></textarea>
       <button id="send" type="submit">Send</button>
     </form>
   </main>
@@ -187,17 +187,17 @@
     function responseLinks(data) {
       const links = [];
       if (data.data?.document_url) {
-        links.push({ href: data.data.document_url, label: `Stiahnut ${data.data.file_name || "dokument"}` });
+        links.push({ href: data.data.document_url, label: `Download ${data.data.file_name || "document"}` });
       }
       if (data.data?.protocol_url) {
-        links.push({ href: data.data.protocol_url, label: "Stiahnut protokol" });
+        links.push({ href: data.data.protocol_url, label: "Download protocol" });
       }
       return links;
     }
 
     function responseEmbeds(data) {
       if (data.data?.document_url && String(data.data?.format || "").toLowerCase() === "pdf") {
-        return [{ type: "pdf", href: data.data.document_url, label: data.data.file_name || "PDF dokument" }];
+        return [{ type: "pdf", href: data.data.document_url, label: data.data.file_name || "PDF document" }];
       }
       return [];
     }
@@ -211,7 +211,7 @@
 
     function normalizeResponse(data) {
       if (data.action === "error") {
-        return data.message || "Niečo sa nepodarilo. Skús to prosím ešte raz.";
+        return data.message || "Something went wrong. Please try again.";
       }
 
       if (data.action === "assets_print") {
@@ -222,22 +222,22 @@
           lines.push(`${data.message || "Assets print protocol ready."}`);
         }
         if (data.data?.protocol_url) {
-          lines.push(`\nSubor: ${data.data.protocol_url}`);
+          lines.push(`\nFile: ${data.data.protocol_url}`);
         }
         return lines.join("\n");
       }
 
       if ((data.action === "offboarding" || data.action === "onboarding") && data.data?.document_url) {
-        const lines = [data.message || "Dokument je pripraveny."];
-        if (data.data?.template?.name) lines.push(`Sablona: ${data.data.template.name}`);
-        if (data.data?.template_error) lines.push(`Poznamka: sablona nesla vyplnit, preto som vytvoril zalozny PDF dokument.`);
+        const lines = [data.message || "Document is ready."];
+        if (data.data?.template?.name) lines.push(`Template: ${data.data.template.name}`);
+        if (data.data?.template_error) lines.push(`Note: the template could not be filled, so I created a fallback PDF document.`);
         if (data.data?.format) lines.push(`Format: ${data.data.format}`);
-        if (Array.isArray(data.data?.assets)) lines.push(`Zariadenia: ${data.data.assets.length}`);
-        if (Array.isArray(data.data?.assigned_assets)) lines.push(`Priradene v Assets: ${data.data.assigned_assets.length}`);
-        if (Array.isArray(data.data?.unassigned_assets)) lines.push(`Odassignovane v Assets: ${data.data.unassigned_assets.length}`);
-        if (Array.isArray(data.data?.assign_errors) && data.data.assign_errors.length) lines.push(`Chyby priradenia: ${data.data.assign_errors.length}`);
-        if (Array.isArray(data.data?.unassign_errors) && data.data.unassign_errors.length) lines.push(`Chyby odassignovania: ${data.data.unassign_errors.length}`);
-        lines.push(`Subor: ${data.data.document_url}`);
+        if (Array.isArray(data.data?.assets)) lines.push(`Devices: ${data.data.assets.length}`);
+        if (Array.isArray(data.data?.assigned_assets)) lines.push(`Assigned in Assets: ${data.data.assigned_assets.length}`);
+        if (Array.isArray(data.data?.unassigned_assets)) lines.push(`Unassigned in Assets: ${data.data.unassigned_assets.length}`);
+        if (Array.isArray(data.data?.assign_errors) && data.data.assign_errors.length) lines.push(`Assignment errors: ${data.data.assign_errors.length}`);
+        if (Array.isArray(data.data?.unassign_errors) && data.data.unassign_errors.length) lines.push(`Unassignment errors: ${data.data.unassign_errors.length}`);
+        lines.push(`File: ${data.data.document_url}`);
         return lines.join("\n");
       }
 
@@ -245,9 +245,9 @@
       lines.push(`${data.message || "Done."}`);
       // Keep internal routing out of the chat UI; users should see outcomes, not debug labels.
       if (data.data?.protocol) lines.push(`\n${data.data.protocol}`);
-      if (typeof data.data?.total === "number") lines.push(`Spolu: ${data.data.total}`);
+      if (typeof data.data?.total === "number") lines.push(`Total: ${data.data.total}`);
       if (Array.isArray(data.data?.users) && data.data.users.length) {
-        lines.push("\nPoužívatelia:");
+        lines.push("\nUsers:");
         for (const u of data.data.users.slice(0, 20)) {
           lines.push(`- ${u.display_name || "(no name)"}${u.email ? ` <${u.email}>` : ""}`);
         }
@@ -255,7 +255,7 @@
       if (data.data?.summary) lines.push(`\n${data.data.summary}`);
       if (data.data?.key) lines.push(`Ticket: ${data.data.key}`);
       if (Array.isArray(data.data?.issues) && data.data.issues.length) {
-        lines.push("\nTikety:");
+        lines.push("\nTickets:");
         for (const it of data.data.issues.slice(0, 8)) {
           lines.push(`- ${it.key}: ${it.summary || "(no summary)"}`);
         }
@@ -293,10 +293,10 @@
       }
     }
 
-    addBubble("Ahoj, som Jira bot. Napis, co potrebujes urobit s ticketmi.", "bot");
-    addToConversation("assistant", "Ahoj, som Jira bot. Napis, co potrebujes urobit s ticketmi.");
+    addBubble("Hi, I am Jira bot. Tell me what you need to do with tickets.", "bot");
+    addToConversation("assistant", "Hi, I am Jira bot. Tell me what you need to do with tickets.");
     if (!localStorage.getItem(tokenKey)) {
-      addBubble("Web chat je kvoli bezpecnosti zamknuty. Prihlas sa cez Admin a potom sa sem vrat. Jira panel vo Forge funguje dalej priamo cez zabezpeceny widget.", "bot");
+      addBubble("The web chat is locked for security. Log in through Admin and then come back here. The Jira Forge panel continues to work through the secured widget.", "bot");
     }
 
     formEl.addEventListener("submit", async (e) => {
@@ -306,7 +306,7 @@
 
       if (!localStorage.getItem(tokenKey)) {
         addBubble(
-          "Web chat je zamknuty. Klikni hore na Admin, prihlas sa a potom sa vrat sem. V Jira paneli bot funguje priamo cez zabezpeceny widget.",
+          "The web chat is locked. Click Admin at the top, log in, and then return here. In the Jira panel, the bot works directly through the secured widget.",
           "bot",
         );
         return;
@@ -334,7 +334,7 @@
         if (!res.ok) {
           const detail = data.detail || "Request failed";
           const messageText = res.status === 401
-            ? "Web chat nema platne prihlasenie. Klikni na Admin, prihlas sa a skus to znova."
+            ? "The web chat does not have a valid login. Click Admin, log in, and try again."
             : `Error: ${detail}`;
           addBubble(messageText, "bot");
           addToConversation("assistant", messageText);
