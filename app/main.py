@@ -2625,6 +2625,9 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
                     detail="Assignee missing. Example: 'prirad KAN-12 na imrich'.",
                 )
             wants_all = bool(re.search(r"\b(vsetky|všetky|all|neassignovane|nepriradene)\b", lower_message))
+            # An explicit bulk request must not silently target the Jira panel's current issue.
+            if wants_all:
+                issue_key = None
             if not issue_key:
                 user = _resolve_assignee_user(assignee_query)
                 if not wants_all:
