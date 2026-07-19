@@ -2488,7 +2488,7 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
             "ticket" in lower_message or "tiket" in lower_message or _extract_issue_key(payload.message) is not None
         )
         list_users_hint = bool(
-            re.search(r"\b(zoznam|vypis|list|kto su|ake mame|akych mame|daj mi|ukaz)\b", normalized_message)
+            re.search(r"\b(zoznam|vypis|zobraz|list|kto su|ake mame|akych mame|daj mi|ukaz)\b", normalized_message)
             and re.search(
                 r"\b(user|useri|userov|users|uzivatel|uzivatelia|uzivatelov|pouzivatel|pouzivatelia|pouzivatelov|admin|admini|adminov|admins)\b",
                 normalized_message,
