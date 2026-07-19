@@ -2625,21 +2625,22 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
                     detail="Assignee missing. Example: 'prirad KAN-12 na imrich'.",
                 )
             wants_all = bool(re.search(r"\b(vsetky|všetky|all|neassignovane|nepriradene)\b", lower_message))
-            if wants_all and not issue_key:
-                bulk = _assign_all_unassigned(assignee_query, max_results=500)
-                return ChatResponse(
-                    action="assign_bulk",
-                    message=f"Done. I assigned {bulk['assigned_count']} unassigned ticket(s) to {bulk['assignee_display_name']}.",
-                    data=bulk,
-                )
             if not issue_key:
                 user = _resolve_assignee_user(assignee_query)
+                if not wants_all:
+                    return ChatResponse(
+                        action="chat",
+                        message=(
+                            f"Mám priradiť ticket používateľovi {user.get('displayName')}. "
+                            "Napíš prosím konkrétny kľúč, napríklad: „priraď KAN-3 mne“."
+                        ),
+                        data=None,
+                    )
                 return ChatResponse(
                     action="chat",
                     message=(
-                        f"I found user {user.get('displayName')}. "
-                        "Do you want me to assign all unassigned tickets to this user? "
-                        "Write \"all\" or \"yes\"."
+                        f"Našiel som používateľa {user.get('displayName')}. Chceš priradiť všetky nepriradené "
+                        "tickety? Potvrď to odpoveďou „áno“."
                     ),
                     data=_pending_data({"type": "assign_all_unassigned", "assignee_query": assignee_query}),
                 )
@@ -2658,7 +2659,11 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
                 or _extract_issue_key_from_history(payload.history)
             )
             if not issue_key:
-                raise HTTPException(status_code=400, detail="Issue key missing. Example: zavri KAN-11")
+                return ChatResponse(
+                    action="chat",
+                    message="Ktorý ticket mám uzavrieť? Napíš jeho kľúč, napríklad: „zavri KAN-11“.",
+                    data=None,
+                )
             closed = _close_issue(issue_key)
             if closed.get("changed"):
                 msg = f"Done, I closed ticket {issue_key}. New status: {closed.get('status')}."
