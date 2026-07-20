@@ -325,6 +325,28 @@
       </section>
 
       <section class="panel">
+        <h2>Knowledge base (RAG)</h2>
+        <div class="muted">Upload internal reference documents. When enabled, JiraBot retrieves relevant excerpts for normal chat questions. Ticket and Assets actions remain unchanged.</div>
+        <label style="display: flex; gap: 8px; align-items: center; margin-top: 12px;">
+          <input id="ragEnabled" type="checkbox" /> Enable RAG for chat answers
+        </label>
+        <div class="row" style="margin-top: 12px;">
+          <div>
+            <label for="ragName">Document name</label>
+            <input id="ragName" placeholder="VPN support guide" />
+          </div>
+          <div>
+            <label for="ragFile">File</label>
+            <input id="ragFile" type="file" accept=".txt,.md,.csv,.json,.log,.pdf,.docx,.pptx,.xlsx" />
+          </div>
+          <button id="uploadRagButton" type="button">Upload document</button>
+        </div>
+        <div class="muted" style="margin-top: 8px;">Supported: TXT, MD, CSV, JSON, LOG, PDF, DOCX, PPTX, XLSX. Maximum 16 MB per file.</div>
+        <div id="ragStatus" class="status"></div>
+        <div id="ragDocuments" class="templates"></div>
+      </section>
+
+      <section class="panel">
         <h2>Admin accounts</h2>
         <div class="row">
           <div>
@@ -591,7 +613,7 @@
       const me = await api("/admin/api/me");
       $("currentAdmin").textContent = `Prihlaseny: ${me.admin.display_name || me.admin.username}`;
       showLoggedIn(true);
-      await Promise.all([loadSettings(), loadAdmins(), loadBotPermissions(), loadBotGroups(), loadTemplates()]);
+      await Promise.all([loadSettings(), loadAdmins(), loadBotPermissions(), loadBotGroups(), loadTemplates(), loadRagDocuments()]);
     }
 
     async function loadSettings() {
@@ -600,6 +622,7 @@
       $("model").value = data.settings.model || "";
       $("systemPrompt").value = data.settings.system_prompt || "";
       $("skillsMd").value = data.settings.skills_md || "";
+      $("ragEnabled").checked = Boolean(data.settings.rag_enabled);
       renderModelPicker(data.settings.model || "", data.available_models || []);
     }
 
@@ -768,6 +791,28 @@
         }
         $("botGroupsList").appendChild(item);
       }
+    }
+
+    async function loadRagDocuments() {
+      const data = await api("/admin/api/rag-documents");
+      const root = $("ragDocuments");
+      root.innerHTML = "";
+      for (const document of data.documents || []) {
+        const item = document.createElement("div");
+        item.className = "template-item";
+        item.innerHTML = `<div><strong>${document.name}</strong> <span class="muted">(${document.extension}, ${document.chunk_count} chunks)</span></div><div class="muted">${document.file_name} - ${Math.ceil((document.size_bytes || 0) / 1024)} KB</div><div class="template-actions"></div>`;
+        const remove = document.createElement("button");
+        remove.className = "secondary";
+        remove.textContent = "Delete";
+        remove.addEventListener("click", async () => {
+          if (!confirm(`Delete RAG document ${document.name}?`)) return;
+          await api(`/admin/api/rag-documents/${document.id}`, { method: "DELETE" });
+          await loadRagDocuments();
+        });
+        item.querySelector(".template-actions").appendChild(remove);
+        root.appendChild(item);
+      }
+      if (!(data.documents || []).length) root.textContent = "No RAG documents uploaded.";
     }
 
     async function searchJiraUsers() {
@@ -955,6 +1000,7 @@
             model: $("model").value,
             system_prompt: $("systemPrompt").value,
             skills_md: $("skillsMd").value,
+            rag_enabled: $("ragEnabled").checked,
           }),
         });
         setStatus("settingsStatus", "Saved.");
@@ -1080,6 +1126,26 @@
         await loadTemplates();
       } catch (err) {
         setStatus("templateStatus", err.message, true);
+      }
+    });
+
+    $("uploadRagButton").addEventListener("click", async () => {
+      try {
+        const file = $("ragFile").files[0];
+        if (!file) throw new Error("Choose a RAG document first.");
+        if (file.size > 16 * 1024 * 1024) throw new Error("Maximum file size is 16 MB.");
+        setStatus("ragStatus", "Uploading and indexing document...");
+        const content = await fileToBase64(file);
+        await api("/admin/api/rag-documents", {
+          method: "POST",
+          body: JSON.stringify({ name: $("ragName").value || file.name, file_name: file.name, content_base64: content }),
+        });
+        $("ragFile").value = "";
+        $("ragName").value = "";
+        setStatus("ragStatus", "Document indexed. Enable RAG in Bot settings and save settings.");
+        await loadRagDocuments();
+      } catch (err) {
+        setStatus("ragStatus", err.message, true);
       }
     });
 

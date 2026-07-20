@@ -58,9 +58,10 @@ class RuntimeSettingsStore:
             "model": str(data.get("model") or self._default_model),
             "system_prompt": str(data.get("system_prompt") or DEFAULT_SYSTEM_PROMPT),
             "skills_md": skills_md,
+            "rag_enabled": bool(data.get("rag_enabled", False)),
         }
 
-    def update(self, *, model: str, system_prompt: str, skills_md: str) -> dict[str, Any]:
+    def update(self, *, model: str, system_prompt: str, skills_md: str, rag_enabled: bool = False) -> dict[str, Any]:
         model = model.strip()
         system_prompt = system_prompt.strip()
         skills_md = skills_md.strip()
@@ -69,7 +70,7 @@ class RuntimeSettingsStore:
         if not system_prompt:
             raise ValueError("System prompt is required.")
         self._settings_path.write_text(
-            json.dumps({"model": model, "system_prompt": system_prompt}, ensure_ascii=False, indent=2),
+            json.dumps({"model": model, "system_prompt": system_prompt, "rag_enabled": bool(rag_enabled)}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         self._skills_path.write_text(skills_md or DEFAULT_SKILLS_MD, encoding="utf-8")

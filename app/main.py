@@ -25,6 +25,7 @@ from app.jira_client import JiraClient
 from app.jql_guard import JQLValidationError, validate_jql
 from app.offboarding_documents import OffboardingTemplateStore, render_offboarding_document
 from app.reporting import build_ticket_report
+from app.rag_store import RagStore
 from app.runtime_settings import RuntimeSettingsStore
 from app.schemas import (
     CreateTicketRequest,
@@ -66,6 +67,7 @@ admin_store = AdminStore(DATA_DIR / "admin.sqlite3")
 admin_store.bootstrap_admin(settings.admin_bootstrap_username, settings.admin_bootstrap_password)
 template_store = OffboardingTemplateStore(DATA_DIR, root_name="offboarding_templates")
 onboarding_template_store = OffboardingTemplateStore(DATA_DIR, root_name="onboarding_templates")
+rag_store = RagStore(DATA_DIR)
 jira = JiraClient(settings)
 ai = AIClient(settings, runtime_context=runtime_settings.ai_context)
 STATIC_DIR = BASE_DIR / "static"
@@ -307,6 +309,13 @@ class BotSettingsRequest(BaseModel):
     model: str = Field(min_length=2, max_length=120)
     system_prompt: str = Field(min_length=1, max_length=8000)
     skills_md: str = Field(default="", max_length=20000)
+    rag_enabled: bool = False
+
+
+class RagDocumentRequest(BaseModel):
+    name: str = Field(default="", max_length=160)
+    file_name: str = Field(min_length=1, max_length=255)
+    content_base64: str = Field(min_length=1)
 
 
 class OffboardingTemplateRequest(BaseModel):
@@ -661,10 +670,41 @@ def admin_update_settings(payload: BotSettingsRequest, admin: dict[str, Any] = D
             model=payload.model,
             system_prompt=payload.system_prompt,
             skills_md=payload.skills_md,
+            rag_enabled=payload.rag_enabled,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"settings": data, "available_models": AVAILABLE_MODELS, "model_catalog": MODEL_CATALOG}
+
+
+@app.get("/admin/api/rag-documents")
+def admin_list_rag_documents(admin: dict[str, Any] = Depends(_require_admin)) -> dict[str, Any]:
+    return {"documents": rag_store.list_documents(), "supported_extensions": sorted(RagStore.SUPPORTED_EXTENSIONS)}
+
+
+@app.post("/admin/api/rag-documents")
+def admin_add_rag_document(
+    payload: RagDocumentRequest,
+    admin: dict[str, Any] = Depends(_require_admin),
+) -> dict[str, Any]:
+    try:
+        document = rag_store.add_document(
+            name=payload.name,
+            file_name=payload.file_name,
+            content_base64=payload.content_base64,
+        )
+        return {"document": document, "documents": rag_store.list_documents()}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/admin/api/rag-documents/{document_id}")
+def admin_delete_rag_document(document_id: str, admin: dict[str, Any] = Depends(_require_admin)) -> dict[str, Any]:
+    try:
+        rag_store.delete_document(document_id)
+        return {"documents": rag_store.list_documents()}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/admin/api/offboarding-templates")
@@ -2791,8 +2831,15 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
             return ChatResponse(action="help", message=help_text, data=None)
 
         if action == "chat":
-            reply = ai.general_chat_reply(user_message=model_input, assets_enabled=_assets_enabled())
-            return ChatResponse(action="chat", message=reply, data=None)
+            rag_context, rag_sources = ("", [])
+            if runtime_settings.get().get("rag_enabled"):
+                rag_context, rag_sources = rag_store.context_for(payload.message)
+            reply = ai.general_chat_reply(
+                user_message=model_input,
+                assets_enabled=_assets_enabled(),
+                rag_context=rag_context,
+            )
+            return ChatResponse(action="chat", message=reply, data={"rag_sources": rag_sources} if rag_sources else None)
 
         if action in {"assets_search", "assets_owner", "assets_hw", "assets_job_file", "assets_dora", "assets_sla"}:
             if not _assets_enabled():
