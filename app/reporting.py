@@ -17,8 +17,8 @@ def _report_spec(message: str) -> tuple[str, str, int | None]:
         kind, title = "assignee", "Tickets by assignee"
     elif re.search(r"(type|typ ticket|typ tiket|issue type)", text):
         kind, title = "issue_type", "Tickets by type"
-    elif re.search(r"(trend|created|vytvoren|tyzden|týždeň|month|mesiac)", text):
-        kind, title = "created_trend", "Created tickets over time"
+    elif re.search(r"(trend|created|vytvoren|vyroben|kazdy den|každý deň|denne|denny|denný|daily|tyzden|týždeň|month|mesiac)", text):
+        kind, title = "created_trend", "Created tickets per day"
     else:
         kind, title = "status", "Tickets by status"
     period = re.search(r"(?:last|za posledn)[^0-9]{0,12}(7|14|30|60|90)\s*(?:d|day|dni)", text)
