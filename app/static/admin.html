@@ -797,16 +797,16 @@
       const data = await api("/admin/api/rag-documents");
       const root = $("ragDocuments");
       root.innerHTML = "";
-      for (const document of data.documents || []) {
+      for (const ragDocument of data.documents || []) {
         const item = document.createElement("div");
         item.className = "template-item";
-        item.innerHTML = `<div><strong>${document.name}</strong> <span class="muted">(${document.extension}, ${document.chunk_count} chunks)</span></div><div class="muted">${document.file_name} - ${Math.ceil((document.size_bytes || 0) / 1024)} KB</div><div class="template-actions"></div>`;
+        item.innerHTML = `<div><strong>${ragDocument.name}</strong> <span class="muted">(${ragDocument.extension}, ${ragDocument.chunk_count} chunks)</span></div><div class="muted">${ragDocument.file_name} - ${Math.ceil((ragDocument.size_bytes || 0) / 1024)} KB</div><div class="template-actions"></div>`;
         const remove = document.createElement("button");
         remove.className = "secondary";
         remove.textContent = "Delete";
         remove.addEventListener("click", async () => {
-          if (!confirm(`Delete RAG document ${document.name}?`)) return;
-          await api(`/admin/api/rag-documents/${document.id}`, { method: "DELETE" });
+          if (!confirm(`Delete RAG document ${ragDocument.name}?`)) return;
+          await api(`/admin/api/rag-documents/${ragDocument.id}`, { method: "DELETE" });
           await loadRagDocuments();
         });
         item.querySelector(".template-actions").appendChild(remove);
