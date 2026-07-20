@@ -75,6 +75,15 @@ resolver.define("sendMessage", async ({ payload }) => {
     };
   }
 
+  const publicBackendUrl = backendUrl.replace(/\/$/, "");
+  // The backend returns signed download paths. Forge must make them absolute,
+  // otherwise router.open resolves them against the Jira site URL.
+  for (const key of ["document_url", "protocol_url", "chart_url", "pdf_url", "xlsx_url"]) {
+    if (typeof data?.data?.[key] === "string" && data.data[key].startsWith("/")) {
+      data.data[key] = `${publicBackendUrl}${data.data[key]}`;
+    }
+  }
+
   return { ok: true, data };
 });
 
