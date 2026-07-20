@@ -126,6 +126,14 @@
       border-radius: 10px;
       background: #07101e;
     }
+    .report-chart {
+      display: block;
+      width: min(860px, 100%);
+      margin-top: 10px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+    }
   </style>
 </head>
 <body>
@@ -173,12 +181,20 @@
         el.appendChild(a);
       }
       for (const embed of embeds) {
-        if (embed.type !== "pdf") continue;
-        const iframe = document.createElement("iframe");
-        iframe.className = "pdf-inline";
-        iframe.src = embed.href;
-        iframe.title = embed.label || "PDF document";
-        el.appendChild(iframe);
+        if (embed.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.className = "pdf-inline";
+          iframe.src = embed.href;
+          iframe.title = embed.label || "PDF document";
+          el.appendChild(iframe);
+        }
+        if (embed.type === "image") {
+          const image = document.createElement("img");
+          image.className = "report-chart";
+          image.src = embed.href;
+          image.alt = embed.label || "Report chart";
+          el.appendChild(image);
+        }
       }
       chatEl.appendChild(el);
       chatEl.scrollTop = chatEl.scrollHeight;
@@ -192,12 +208,20 @@
       if (data.data?.protocol_url) {
         links.push({ href: data.data.protocol_url, label: "Download protocol" });
       }
+      if (data.action === "report") {
+        if (data.data?.pdf_url) links.push({ href: data.data.pdf_url, label: "Download PDF report" });
+        if (data.data?.xlsx_url) links.push({ href: data.data.xlsx_url, label: "Download Excel report" });
+        if (data.data?.chart_url) links.push({ href: data.data.chart_url, label: "Download chart" });
+      }
       return links;
     }
 
     function responseEmbeds(data) {
       if (data.data?.document_url && String(data.data?.format || "").toLowerCase() === "pdf") {
         return [{ type: "pdf", href: data.data.document_url, label: data.data.file_name || "PDF document" }];
+      }
+      if (data.action === "report" && data.data?.chart_url) {
+        return [{ type: "image", href: data.data.chart_url, label: data.data.title || "Report chart" }];
       }
       return [];
     }

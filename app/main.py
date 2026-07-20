@@ -24,6 +24,7 @@ from app.config import get_settings
 from app.jira_client import JiraClient
 from app.jql_guard import JQLValidationError, validate_jql
 from app.offboarding_documents import OffboardingTemplateStore, render_offboarding_document
+from app.reporting import build_ticket_report
 from app.runtime_settings import RuntimeSettingsStore
 from app.schemas import (
     CreateTicketRequest,
@@ -77,7 +78,7 @@ _SECURITY_SECRET = (settings.widget_shared_secret or "").strip() or secrets.toke
 class RestrictedStaticFiles(StaticFiles):
     async def get_response(self, path: str, scope: dict[str, Any]) -> Any:
         first_segment = path.replace("\\", "/").split("/", 1)[0].lower()
-        if first_segment in {"offboarding", "onboarding", "protocols"}:
+        if first_segment in {"offboarding", "onboarding", "protocols", "reports"}:
             raise StarletteHTTPException(status_code=404)
         return await super().get_response(path, scope)
 
@@ -259,6 +260,7 @@ ACTION_PERMISSION_MAP = {
     "search": ["tickets.read"],
     "list_tickets": ["tickets.read"],
     "summarize": ["tickets.read"],
+    "report": ["tickets.read"],
     "similar": ["tickets.read"],
     "create": ["tickets.write"],
     "assign": ["tickets.assign"],
@@ -429,7 +431,7 @@ def _signed_download_url(kind: str, file_name: str) -> str:
 
 
 def _generated_file_path(kind: str, file_name: str) -> Path:
-    if kind not in {"offboarding", "onboarding", "protocols"}:
+    if kind not in {"offboarding", "onboarding", "protocols", "reports"}:
         raise HTTPException(status_code=404, detail="Unknown download type.")
     safe_name = Path(file_name).name
     if safe_name != file_name or not safe_name:
@@ -2473,6 +2475,10 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
         )
         asset_key_print_hint = bool(re.search(r"\b[A-Z]{2,10}-\d+\b", payload.message.upper()))
         help_hint = bool(re.search(r"\b(help|pomoc|co vies|co dokazes|what can you do|capabilities)\b", lower_message))
+        report_hint = bool(
+            re.search(r"\b(report|graf|graph|chart|dashboard|statistik|statistics|trend)\b", normalized_message)
+            and re.search(r"\b(ticket\w*|tiket\w*|issue\w*|priorit\w*|status\w*|stav\w*|assignee\w*|assigned\w*|priraden\w*|vytvoren\w*|created\w*)\b", normalized_message)
+        )
         whoami_hint = bool(
             re.search(
                 r"\b(kto som|kym som|ak[ýy] som user|aky som user|moj ucet|m[oô]j ucet|who am i|current user)\b",
@@ -2528,6 +2534,8 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
             action = "offboarding"
         elif greeting_hint or thanks_hint:
             action = "chat"
+        elif report_hint:
+            action = "report"
         elif create_hint and not search_hint and not summarize_hint:
             action = "create"
         elif close_hint:
@@ -2739,6 +2747,22 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
                 data={"jql": f"project = {settings.jira_project_key} ORDER BY updated DESC", "total": len(issues), "issues": issues},
             )
 
+        if action == "report":
+            report = build_ticket_report(
+                jira=jira,
+                project_key=settings.jira_project_key,
+                message=payload.message,
+                output_dir=GENERATED_DIR / "reports",
+            )
+            report["chart_url"] = _signed_download_url("reports", report["files"]["chart"])
+            report["pdf_url"] = _signed_download_url("reports", report["files"]["pdf"])
+            report["xlsx_url"] = _signed_download_url("reports", report["files"]["xlsx"])
+            return ChatResponse(
+                action="report",
+                message=f"Report ready: {report['title']} ({report['total']} ticket(s)).",
+                data=report,
+            )
+
         if action == "help":
             lines = [
                 "I can work with Jira tickets through chat:",
@@ -2751,12 +2775,13 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
                 "7) List tickets: \"list tickets\"",
                 "8) List users: \"list users\"",
                 "9) Offboarding checklist based on Jira access tickets",
+                "10) Reports with charts and PDF/Excel export: \"create a chart of tickets by priority\"",
             ]
             if _assets_enabled():
                 lines.extend(
                     [
-                        "10) Assets lookup: owner, HW inventory, job/file, SLA, DORA relevance",
-                        "11) Assets print protocol",
+                        "11) Assets lookup: owner, HW inventory, job/file, SLA, DORA relevance",
+                        "12) Assets print protocol",
                     ]
                 )
             lines.append("Tip: write naturally and I will decide what action to run.")

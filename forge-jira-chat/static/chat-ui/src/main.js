@@ -51,6 +51,15 @@ function normalizeResponse(data) {
   if (data.action === "assets_print" && data.data?.protocol) {
     return data.data.protocol;
   }
+  if (data.action === "report") {
+    const lines = [data.message || "Report ready."];
+    if (data.data?.jql) lines.push(`JQL: ${data.data.jql}`);
+    if (Array.isArray(data.data?.counts) && data.data.counts.length) {
+      lines.push("\nResults:");
+      for (const item of data.data.counts.slice(0, 12)) lines.push(`- ${item.label}: ${item.value}`);
+    }
+    return lines.join("\n");
+  }
 
   if (String(data.action || "").startsWith("assets_")) {
     const lines = [];
@@ -149,6 +158,11 @@ function responseLinks(data) {
   }
   if (data?.data?.protocol_url) {
     links.push({ href: data.data.protocol_url, label: "Download protocol" });
+  }
+  if (data?.action === "report") {
+    if (data.data?.pdf_url) links.push({ href: data.data.pdf_url, label: "Download PDF report" });
+    if (data.data?.xlsx_url) links.push({ href: data.data.xlsx_url, label: "Download Excel report" });
+    if (data.data?.chart_url) links.push({ href: data.data.chart_url, label: "Open chart" });
   }
   return links;
 }
