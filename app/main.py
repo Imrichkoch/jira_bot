@@ -2520,6 +2520,10 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
         action = str(parsed.get("action", "")).lower().strip()
         if whoami_hint:
             action = "whoami"
+        elif report_hint:
+            # A report request can naturally contain "show/list tickets" too.
+            # Prefer the explicit graph/report intent over a plain ticket list.
+            action = "report"
         elif list_users_hint:
             action = "list_users"
         elif list_tickets_hint:
@@ -2534,8 +2538,6 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
             action = "offboarding"
         elif greeting_hint or thanks_hint:
             action = "chat"
-        elif report_hint:
-            action = "report"
         elif create_hint and not search_hint and not summarize_hint:
             action = "create"
         elif close_hint:
