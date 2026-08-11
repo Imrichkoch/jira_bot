@@ -23,6 +23,8 @@ from app.analysis import cosine_similarity, extract_adf_text, flatten_assets_obj
 from app.config import get_settings
 from app.jira_client import JiraClient
 from app.jql_guard import JQLValidationError, validate_jql
+from app.ldap_auth import LdapAuthenticationError, LdapAuthenticator
+from app.ldap_settings import LdapSettingsStore
 from app.offboarding_documents import OffboardingTemplateStore, render_offboarding_document
 from app.reporting import build_ticket_report
 from app.rag_store import RagStore
@@ -68,6 +70,7 @@ admin_store.bootstrap_admin(settings.admin_bootstrap_username, settings.admin_bo
 template_store = OffboardingTemplateStore(DATA_DIR, root_name="offboarding_templates")
 onboarding_template_store = OffboardingTemplateStore(DATA_DIR, root_name="onboarding_templates")
 rag_store = RagStore(DATA_DIR)
+ldap_settings = LdapSettingsStore(DATA_DIR)
 jira = JiraClient(settings)
 ai = AIClient(settings, runtime_context=runtime_settings.ai_context)
 STATIC_DIR = BASE_DIR / "static"
@@ -93,6 +96,7 @@ MODEL_CATALOG = [
         "provider": "OpenAI direct",
         "note": "Direct OpenAI models. Use these when OPENAI_BASE_URL is empty.",
         "models": [
+            {"id": "gpt-5.6-luna", "label": "GPT-5.6 Luna"},
             {"id": "gpt-5.4-mini", "label": "GPT-5.4 Mini"},
             {"id": "gpt-5.4", "label": "GPT-5.4"},
             {"id": "gpt-5.3-codex", "label": "GPT-5.3 Codex"},
@@ -105,6 +109,7 @@ MODEL_CATALOG = [
         "provider": "OpenAI via OpenRouter",
         "note": "OpenRouter model IDs. Requires OPENAI_BASE_URL=https://openrouter.ai/api/v1.",
         "models": [
+            {"id": "openai/gpt-5.6-luna", "label": "OpenRouter: GPT-5.6 Luna"},
             {"id": "openai/gpt-5.5-pro", "label": "GPT-5.5 Pro"},
             {"id": "openai/gpt-5.5", "label": "GPT-5.5"},
             {"id": "openai/gpt-5.4-mini", "label": "OpenRouter: GPT-5.4 Mini"},
@@ -312,6 +317,16 @@ class BotSettingsRequest(BaseModel):
     rag_enabled: bool = False
 
 
+class LdapSettingsRequest(BaseModel):
+    mode: str = Field(default="local", max_length=20)
+    server_url: str = Field(default="", max_length=255)
+    use_ssl: bool = True
+    bind_dn: str = Field(default="", max_length=500)
+    user_search_base: str = Field(default="", max_length=500)
+    username_attribute: str = Field(default="uid", max_length=80)
+    admin_group_dn: str = Field(default="", max_length=500)
+
+
 class RagDocumentRequest(BaseModel):
     name: str = Field(default="", max_length=160)
     file_name: str = Field(min_length=1, max_length=255)
@@ -482,6 +497,32 @@ def download_generated_file(kind: str, file_name: str, expires: int = Query(...)
 
 @app.post("/admin/api/login")
 def admin_login(payload: AdminLoginRequest) -> dict[str, Any]:
+    ldap_config = ldap_settings.get()
+    mode = ldap_config["mode"]
+    if mode in {"ldap", "hybrid"}:
+        try:
+            ldap_user = LdapAuthenticator(ldap_config).authenticate_admin(payload.username, payload.password)
+        except LdapAuthenticationError:
+            ldap_user = None
+        if ldap_user:
+            token = admin_store.create_ldap_session(
+                username=ldap_user.username,
+                display_name=ldap_user.display_name,
+                email=ldap_user.email,
+            )
+            return {
+                "token": token,
+                "admin": {
+                    "id": None,
+                    "username": ldap_user.username,
+                    "display_name": ldap_user.display_name,
+                    "email": ldap_user.email,
+                    "auth_source": "ldap",
+                },
+            }
+        if mode == "ldap":
+            raise HTTPException(status_code=401, detail="Invalid username or password.")
+
     admin = admin_store.authenticate(username=payload.username, password=payload.password)
     if not admin:
         raise HTTPException(status_code=401, detail="Invalid username or password.")
@@ -675,6 +716,34 @@ def admin_update_settings(payload: BotSettingsRequest, admin: dict[str, Any] = D
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"settings": data, "available_models": AVAILABLE_MODELS, "model_catalog": MODEL_CATALOG}
+
+
+@app.get("/admin/api/auth/ldap")
+def admin_get_ldap_settings(admin: dict[str, Any] = Depends(_require_admin)) -> dict[str, Any]:
+    return {"settings": ldap_settings.get()}
+
+
+@app.put("/admin/api/auth/ldap")
+def admin_update_ldap_settings(
+    payload: LdapSettingsRequest,
+    admin: dict[str, Any] = Depends(_require_admin),
+) -> dict[str, Any]:
+    try:
+        return {"settings": ldap_settings.update(payload.model_dump())}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/admin/api/auth/ldap/test")
+def admin_test_ldap_connection(admin: dict[str, Any] = Depends(_require_admin)) -> dict[str, str]:
+    try:
+        config = ldap_settings.get()
+        if config["mode"] == "local":
+            raise ValueError("Save LDAP or Hybrid mode before testing the LDAP connection.")
+        LdapAuthenticator(config).validate_connection()
+        return {"status": "ok", "message": "LDAP service account connection succeeded."}
+    except (LdapAuthenticationError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/admin/api/rag-documents")

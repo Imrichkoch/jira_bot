@@ -29,6 +29,7 @@ Fill in `.env`:
 - `WIDGET_SHARED_SECRET`, a long random secret that must match `BOT_WIDGET_SECRET` in Forge
 - `APP_DATA_DIR`, optional location for the admin database and runtime settings
 - `ADMIN_BOOTSTRAP_USERNAME` and `ADMIN_BOOTSTRAP_PASSWORD`, optional bootstrap values for creating the first admin
+- `LDAP_BIND_PASSWORD`, optional LDAP service-account password. This remains only in the server environment and is never stored in the Admin UI/database.
 
 ## 2) Run Locally
 
@@ -254,6 +255,7 @@ Admins can:
 - edit `skills.md`, which is included in AI instructions
 - upload onboarding/offboarding templates in DOCX/PDF format
 - configure DOCX placeholders and PDF positions for employee name, PC/device, serial number, and extra text
+- configure optional LDAP/Active Directory administration login. Start in `Local` mode; `Hybrid` allows LDAP admins and local break-glass admins, while `LDAP` permits only members of the configured LDAP admin group. LDAP settings contain no password; the bind password is read from `LDAP_BIND_PASSWORD`.
 
 The first admin can be bootstrapped through environment variables:
 - `ADMIN_BOOTSTRAP_USERNAME`

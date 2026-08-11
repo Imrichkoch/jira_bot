@@ -368,6 +368,52 @@
       </section>
 
       <section class="panel">
+        <h2>Authentication and LDAP</h2>
+        <div class="muted">
+          Local remains the default. Use Hybrid to keep a local break-glass administrator while allowing LDAP administrators.
+          The service-account password is intentionally not entered here: set <code>LDAP_BIND_PASSWORD</code> only in the VPS service environment.
+        </div>
+        <div class="grid" style="margin-top: 14px;">
+          <div>
+            <label for="ldapMode">Login mode</label>
+            <select id="ldapMode">
+              <option value="local">Local accounts only</option>
+              <option value="hybrid">Hybrid: LDAP + local break-glass</option>
+              <option value="ldap">LDAP only</option>
+            </select>
+          </div>
+          <div>
+            <label for="ldapServerUrl">LDAP server URL</label>
+            <input id="ldapServerUrl" placeholder="ldaps://ad.example.com:636" />
+          </div>
+          <div>
+            <label for="ldapBindDn">Service account DN</label>
+            <input id="ldapBindDn" placeholder="CN=jirabot,OU=Service Accounts,DC=example,DC=com" />
+          </div>
+          <div>
+            <label for="ldapUserSearchBase">User search base DN</label>
+            <input id="ldapUserSearchBase" placeholder="OU=Users,DC=example,DC=com" />
+          </div>
+          <div>
+            <label for="ldapUsernameAttribute">Username attribute</label>
+            <input id="ldapUsernameAttribute" placeholder="sAMAccountName or uid" value="uid" />
+          </div>
+          <div>
+            <label for="ldapAdminGroupDn">LDAP administrator group DN</label>
+            <input id="ldapAdminGroupDn" placeholder="CN=JiraBot-Admins,OU=Groups,DC=example,DC=com" />
+          </div>
+        </div>
+        <label style="display: flex; gap: 8px; align-items: center; margin-top: 12px;">
+          <input id="ldapUseSsl" type="checkbox" checked /> Use LDAPS/TLS
+        </label>
+        <div class="row" style="margin-top: 12px;">
+          <button id="saveLdapSettingsButton" type="button">Save LDAP settings</button>
+          <button id="testLdapConnectionButton" class="secondary" type="button">Test service account connection</button>
+        </div>
+        <div id="ldapStatus" class="status"></div>
+      </section>
+
+      <section class="panel">
         <h2>JiraBot groups and permissions</h2>
         <div class="muted">
           If no group exists, JiraBot remains available as before.
@@ -522,6 +568,18 @@
     let botGroups = [];
     let editingBotGroupId = null;
 
+    function ldapPayload() {
+      return {
+        mode: $("ldapMode").value,
+        server_url: $("ldapServerUrl").value,
+        use_ssl: $("ldapUseSsl").checked,
+        bind_dn: $("ldapBindDn").value,
+        user_search_base: $("ldapUserSearchBase").value,
+        username_attribute: $("ldapUsernameAttribute").value,
+        admin_group_dn: $("ldapAdminGroupDn").value,
+      };
+    }
+
     function token() {
       return localStorage.getItem(tokenKey) || "";
     }
@@ -613,7 +671,7 @@
       const me = await api("/admin/api/me");
       $("currentAdmin").textContent = `Prihlaseny: ${me.admin.display_name || me.admin.username}`;
       showLoggedIn(true);
-      await Promise.all([loadSettings(), loadAdmins(), loadBotPermissions(), loadBotGroups(), loadTemplates(), loadRagDocuments()]);
+      await Promise.all([loadSettings(), loadAdmins(), loadLdapSettings(), loadBotPermissions(), loadBotGroups(), loadTemplates(), loadRagDocuments()]);
     }
 
     async function loadSettings() {
@@ -672,6 +730,19 @@
         item.innerHTML = `<strong>${admin.username}</strong><span class="muted">${admin.display_name || ""}</span>`;
         $("adminsList").appendChild(item);
       }
+    }
+
+    async function loadLdapSettings() {
+      const data = await api("/admin/api/auth/ldap");
+      const ldap = data.settings || {};
+      $("ldapMode").value = ldap.mode || "local";
+      $("ldapServerUrl").value = ldap.server_url || "";
+      $("ldapUseSsl").checked = ldap.use_ssl !== false;
+      $("ldapBindDn").value = ldap.bind_dn || "";
+      $("ldapUserSearchBase").value = ldap.user_search_base || "";
+      $("ldapUsernameAttribute").value = ldap.username_attribute || "uid";
+      $("ldapAdminGroupDn").value = ldap.admin_group_dn || "";
+      setStatus("ldapStatus", ldap.bind_password_configured ? "LDAP service-account password is configured on the server." : "LDAP bind password is not configured. Set LDAP_BIND_PASSWORD on the VPS before enabling LDAP.");
     }
 
     async function loadBotPermissions() {
@@ -1025,6 +1096,27 @@
         await loadAdmins();
       } catch (err) {
         setStatus("adminStatus", err.message, true);
+      }
+    });
+
+    $("saveLdapSettingsButton").addEventListener("click", async () => {
+      try {
+        setStatus("ldapStatus", "Saving LDAP settings...");
+        const data = await api("/admin/api/auth/ldap", { method: "PUT", body: JSON.stringify(ldapPayload()) });
+        const mode = data.settings.mode;
+        setStatus("ldapStatus", `LDAP settings saved. Active login mode: ${mode}.`);
+      } catch (err) {
+        setStatus("ldapStatus", err.message, true);
+      }
+    });
+
+    $("testLdapConnectionButton").addEventListener("click", async () => {
+      try {
+        setStatus("ldapStatus", "Testing LDAP service account connection...");
+        const data = await api("/admin/api/auth/ldap/test", { method: "POST" });
+        setStatus("ldapStatus", data.message || "LDAP connection succeeded.");
+      } catch (err) {
+        setStatus("ldapStatus", err.message, true);
       }
     });
 

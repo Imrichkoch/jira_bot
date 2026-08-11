@@ -4,6 +4,7 @@ import hashlib
 import re
 import secrets
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -20,8 +21,20 @@ class AdminStore:
         conn.row_factory = sqlite3.Row
         return conn
 
+    @contextmanager
+    def _connection(self) -> Any:
+        conn = self._connect()
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     def _init_schema(self) -> None:
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS admins (
@@ -41,6 +54,18 @@ class AdminStore:
                     expires_at TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY(admin_id) REFERENCES admins(id)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ldap_sessions (
+                    token TEXT PRIMARY KEY,
+                    username TEXT NOT NULL,
+                    display_name TEXT,
+                    email TEXT,
+                    expires_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL
                 )
                 """
             )
@@ -97,7 +122,7 @@ class AdminStore:
         return secrets.compare_digest(actual, expected)
 
     def count_admins(self) -> int:
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute("SELECT COUNT(*) AS count FROM admins").fetchone()
             return int(row["count"])
 
@@ -114,7 +139,7 @@ class AdminStore:
         if len(password) < 10:
             raise ValueError("Password must have at least 10 characters.")
         now = datetime.now(timezone.utc).isoformat()
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "INSERT INTO admins (username, display_name, password_hash, created_at) VALUES (?, ?, ?, ?)",
                 (username, display_name or username, self._hash_password(password), now),
@@ -126,14 +151,14 @@ class AdminStore:
         return dict(row)
 
     def list_admins(self) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 "SELECT id, username, display_name, created_at FROM admins ORDER BY created_at ASC"
             ).fetchall()
         return [dict(row) for row in rows]
 
     def authenticate(self, *, username: str, password: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT id, username, display_name, password_hash, created_at FROM admins WHERE username = ?",
                 (username.strip().lower(),),
@@ -148,7 +173,7 @@ class AdminStore:
         token = secrets.token_urlsafe(32)
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(hours=hours)
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "INSERT INTO sessions (token, admin_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
                 (token, admin_id, expires_at.isoformat(), now.isoformat()),
@@ -157,7 +182,7 @@ class AdminStore:
 
     def get_session_admin(self, token: str) -> dict[str, Any] | None:
         now = datetime.now(timezone.utc).isoformat()
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 """
                 SELECT admins.id, admins.username, admins.display_name, admins.created_at
@@ -167,7 +192,37 @@ class AdminStore:
                 """,
                 (token, now),
             ).fetchone()
-        return dict(row) if row else None
+        if row:
+            return dict(row)
+        with self._connection() as conn:
+            ldap_row = conn.execute(
+                """
+                SELECT username, display_name, email, created_at
+                FROM ldap_sessions
+                WHERE token = ? AND expires_at > ?
+                """,
+                (token, now),
+            ).fetchone()
+        if not ldap_row:
+            return None
+        admin = dict(ldap_row)
+        admin["id"] = None
+        admin["auth_source"] = "ldap"
+        return admin
+
+    def create_ldap_session(self, *, username: str, display_name: str, email: str | None, hours: int = 12) -> str:
+        token = secrets.token_urlsafe(32)
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(hours=hours)
+        with self._connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO ldap_sessions (token, username, display_name, email, expires_at, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (token, username, display_name, email, expires_at.isoformat(), now.isoformat()),
+            )
+        return token
 
     def _group_from_row(self, conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
         group = dict(row)
@@ -190,14 +245,14 @@ class AdminStore:
         return group
 
     def list_bot_groups(self) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 "SELECT id, name, description, created_at FROM bot_groups ORDER BY lower(name) ASC"
             ).fetchall()
             return [self._group_from_row(conn, row) for row in rows]
 
     def bot_groups_configured(self) -> bool:
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute("SELECT COUNT(*) AS count FROM bot_groups").fetchone()
             return int(row["count"]) > 0
 
@@ -212,7 +267,7 @@ class AdminStore:
         if len(clean_name) < 2:
             raise ValueError("Group name must have at least 2 characters.")
         now = datetime.now(timezone.utc).isoformat()
-        with self._connect() as conn:
+        with self._connection() as conn:
             cur = conn.execute(
                 "INSERT INTO bot_groups (name, description, created_at) VALUES (?, ?, ?)",
                 (clean_name, (description or "").strip() or None, now),
@@ -236,7 +291,7 @@ class AdminStore:
         clean_name = re.sub(r"\s+", " ", name or "").strip()
         if len(clean_name) < 2:
             raise ValueError("Group name must have at least 2 characters.")
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "UPDATE bot_groups SET name = ?, description = ? WHERE id = ?",
                 (clean_name, (description or "").strip() or None, group_id),
@@ -253,7 +308,7 @@ class AdminStore:
             return self._group_from_row(conn, row)
 
     def delete_bot_group(self, group_id: int) -> None:
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute("DELETE FROM bot_group_permissions WHERE group_id = ?", (group_id,))
             conn.execute("DELETE FROM bot_group_members WHERE group_id = ?", (group_id,))
             cur = conn.execute("DELETE FROM bot_groups WHERE id = ?", (group_id,))
@@ -285,7 +340,7 @@ class AdminStore:
         if not clean_account_id:
             raise ValueError("Jira account_id is required.")
         now = datetime.now(timezone.utc).isoformat()
-        with self._connect() as conn:
+        with self._connection() as conn:
             exists = conn.execute("SELECT id FROM bot_groups WHERE id = ?", (group_id,)).fetchone()
             if not exists:
                 raise ValueError("Group not found.")
@@ -315,7 +370,7 @@ class AdminStore:
             return dict(row)
 
     def remove_bot_group_member(self, group_id: int, account_id: str) -> None:
-        with self._connect() as conn:
+        with self._connection() as conn:
             cur = conn.execute(
                 "DELETE FROM bot_group_members WHERE group_id = ? AND account_id = ?",
                 (group_id, account_id),
@@ -327,7 +382,7 @@ class AdminStore:
         clean_account_id = (account_id or "").strip()
         if not clean_account_id:
             return set()
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 """
                 SELECT DISTINCT permission
