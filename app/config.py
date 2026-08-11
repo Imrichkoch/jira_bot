@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     widget_shared_secret: str | None = None
     admin_bootstrap_username: str | None = None
     admin_bootstrap_password: str | None = None
+    ldap_bind_password: str | None = None
     app_data_dir: str | None = None
 
     model_config = SettingsConfigDict(

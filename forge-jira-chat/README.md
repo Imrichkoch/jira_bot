@@ -1,16 +1,16 @@
-# Jira AI Chat priamo v Jira (Forge)
+# Jira AI Chat Directly In Jira (Forge)
 
-Toto je Forge appka, ktora prida `Jira AI Chat` priamo do issue view ako panel.
-Z panela vies otvorit aj `Popout` modal chat okno.
+This Forge app adds `Jira AI Chat` directly to Jira as an issue panel and as a global Jira page.
+From the panel, users can also open a larger `Popout` modal chat window.
 
-## Co treba mat
+## Requirements
 
-- Node.js 20+ alebo 22
+- Node.js 20+ or 22
 - Forge CLI
-- Atlassian account s pravami na instalaciu appky
-- Beziaci backend (tvoj FastAPI bot) dostupny z internetu
+- Atlassian account with permissions to install the app
+- Running backend, your FastAPI bot, reachable from the internet over HTTPS
 
-## 1) Install dependencies
+## 1) Install Dependencies
 
 ```bash
 cd forge-jira-chat
@@ -21,42 +21,48 @@ npm run build
 cd ../..
 ```
 
-## 2) Login + set Forge vars
+## 2) Login And Set Forge Variables
 
 ```bash
 forge login
-forge variables set BOT_BACKEND_URL "http://76.13.148.10:8080"
-forge variables set BOT_WIDGET_SECRET "ZMEN-MA-NA-SILNY-SECRET"
+forge variables set BOT_BACKEND_URL "https://jira.raizenko.cloud"
+forge variables set BOT_WIDGET_SECRET "CHANGE-ME-TO-A-STRONG-SECRET"
 ```
 
-## 3) Deploy + install
+## 3) Deploy And Install
 
 ```bash
 forge deploy
 forge install
 ```
 
-Pri `forge install` vyber:
+During `forge install`, choose:
 - product: Jira
-- site: `imrichkoch.atlassian.net`
-- environment: production (alebo development)
+- site: your Atlassian site, for example `testrpchome.atlassian.net`
+- environment: production or development
 
-## 4) Backend ochrana
-
-V backend env (`/etc/jira-ai-ticket-bot.env`) nastav:
+For non-interactive upgrades:
 
 ```bash
-WIDGET_SHARED_SECRET=ZMEN-MA-NA-SILNY-SECRET
+forge install --site testrpchome.atlassian.net --product jira --environment production --upgrade all --confirm-scopes --non-interactive
 ```
 
-Potom restart:
+## 4) Backend Protection
+
+In the backend env file, for example `/opt/jira-ai-ticket-bot/.env`, set:
 
 ```bash
-systemctl restart jira-ai-ticket-bot
+WIDGET_SHARED_SECRET=CHANGE-ME-TO-A-STRONG-SECRET
 ```
 
-Forge resolver vola endpoint `/chat/widget` s hlavičkou `x-widget-secret`.
+Then restart:
 
-## Poznamka
+```bash
+systemctl restart jira-ai-ticket-bot.service
+```
 
-Issue panel sa otvara klikom na ikonu appky v issue detaile. To je najblizsie natívne "vyskakovacie" spravanie v Jira.
+The Forge resolver calls `/chat/widget` with the `x-widget-secret` header.
+
+## Note
+
+The issue panel opens from the app icon in the issue detail view. Jira Product Discovery/Polaris views may not render `jira:issuePanel`, so the app also provides a global Jira page named `Jira AI Chat` under Jira apps.

@@ -63,7 +63,8 @@ resolver.define("sendMessage", async ({ payload, context }) => {
   }
 
   const publicBackendUrl = backendUrl.replace(/\/$/, "");
-  for (const key of ["document_url", "protocol_url"]) {
+  // Keep the alternate resolver source aligned with the Forge entrypoint.
+  for (const key of ["document_url", "protocol_url", "chart_url", "pdf_url", "xlsx_url"]) {
     if (typeof data?.data?.[key] === "string" && data.data[key].startsWith("/")) {
       data.data[key] = `${publicBackendUrl}${data.data[key]}`;
     }

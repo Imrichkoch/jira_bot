@@ -6,3 +6,4 @@ pydantic-settings==2.9.1
 pypdf==5.4.0
 reportlab==4.3.1
 chardet==5.2.0
+ldap3==2.9.1

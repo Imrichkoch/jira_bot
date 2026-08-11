@@ -1,7 +1,24 @@
 import Resolver from "@forge/resolver";
-import api from "@forge/api";
+import api, { route } from "@forge/api";
 
 const resolver = new Resolver();
+
+async function getCurrentJiraUser() {
+  try {
+    const response = await api.asUser().requestJira(route`/rest/api/3/myself`);
+    if (!response.ok) return null;
+    const user = await response.json();
+    return {
+      accountId: user.accountId,
+      displayName: user.displayName,
+      emailAddress: user.emailAddress,
+      active: user.active
+    };
+  } catch {
+    // The backend can still handle requests that do not rely on "me".
+    return null;
+  }
+}
 
 resolver.define("sendMessage", async ({ payload }) => {
   const backendUrl = process.env.BOT_BACKEND_URL;
@@ -15,6 +32,7 @@ resolver.define("sendMessage", async ({ payload }) => {
 
   const issueKey = payload?.issueKey || null;
   const history = Array.isArray(payload?.history) ? payload.history.slice(-20) : [];
+  const pendingAction = payload?.pendingAction || null;
   const message = String(payload?.message || "").trim();
   if (!message) {
     return { ok: false, error: "Message is empty." };
@@ -27,6 +45,7 @@ resolver.define("sendMessage", async ({ payload }) => {
     headers["x-widget-secret"] = widgetSecret;
   }
 
+  const currentUser = await getCurrentJiraUser();
   const response = await api.fetch(`${backendUrl.replace(/\/$/, "")}/chat/widget`, {
     method: "POST",
     headers,
@@ -35,7 +54,9 @@ resolver.define("sendMessage", async ({ payload }) => {
       max_results: 20,
       max_comments: 20,
       current_issue_key: issueKey,
-      history
+      current_user: currentUser,
+      history,
+      pending_action: pendingAction
     })
   });
 
@@ -52,6 +73,15 @@ resolver.define("sendMessage", async ({ payload }) => {
       ok: false,
       error: data?.detail || `Backend error (${response.status})`
     };
+  }
+
+  const publicBackendUrl = backendUrl.replace(/\/$/, "");
+  // The backend returns signed download paths. Forge must make them absolute,
+  // otherwise router.open resolves them against the Jira site URL.
+  for (const key of ["document_url", "protocol_url", "chart_url", "pdf_url", "xlsx_url"]) {
+    if (typeof data?.data?.[key] === "string" && data.data[key].startsWith("/")) {
+      data.data[key] = `${publicBackendUrl}${data.data[key]}`;
+    }
   }
 
   return { ok: true, data };
