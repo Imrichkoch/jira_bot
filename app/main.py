@@ -21,6 +21,7 @@ from app.admin_store import AdminStore
 from app.ai_client import AIClient
 from app.analysis import cosine_similarity, extract_adf_text, flatten_assets_object, overlap_keywords
 from app.config import get_settings
+from app.error_messages import friendly_error_message as _friendly_error_message
 from app.jira_client import JiraClient
 from app.jql_guard import JQLValidationError, validate_jql
 from app.ldap_auth import LdapAuthenticationError, LdapAuthenticator
@@ -2070,28 +2071,6 @@ def _complete_onboarding_asset_selection(pending: dict[str, Any], message: str) 
     )
 
 
-def _friendly_error_message(error: Exception | str) -> str:
-    text = str(error)
-    lowered = text.lower()
-    if "access to assets api was denied" in lowered or ("status_code" in lowered and "403" in lowered and "assets" in lowered):
-        return (
-            "The Jira API token works, but the account used by the bot does not have access to the Jira Assets API. "
-            "Add the required Assets permissions in Atlassian/Jira Service Management for the target schema, for example Object Schema User/Manager, "
-            "or Assets administrator depending on whether the bot should only read or also assign devices."
-        )
-    if "jql" in lowered or "reserved word" in lowered or "vyhraden" in lowered:
-        return (
-            "I could not understand this as a Jira search, and I do not want to show you a technical error. "
-            "Please phrase it more naturally, for example: \"list users\", "
-            "\"show tickets\", or \"find open tickets about laptops\"."
-        )
-    if "no jira user found" in lowered or "pouzivatela" in lowered or "user found" in lowered:
-        return "I could not find that user. Please try the full name or email."
-    if "assets" in lowered:
-        return "Something failed while reading or updating Assets. Please try a more precise device name or user."
-    return "Something went wrong, but I will spare you the technical details. Please try again with a bit more detail."
-
-
 def _extract_issue_key_from_history(history: list[dict[str, str]] | None) -> str | None:
     if not history:
         return None
@@ -3169,15 +3148,15 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
     except HTTPException as exc:
         return ChatResponse(
             action="error",
-            message=_friendly_error_message(exc.detail),
+            message=_friendly_error_message(exc.detail, payload.message),
             data={"status_code": exc.status_code},
         )
     except JQLValidationError as exc:
-        return ChatResponse(action="error", message=_friendly_error_message(exc), data={"type": "jql_validation"})
+        return ChatResponse(action="error", message=_friendly_error_message(exc, payload.message), data={"type": "jql_validation"})
     except RuntimeError as exc:
-        return ChatResponse(action="error", message=_friendly_error_message(exc), data={"type": "runtime"})
+        return ChatResponse(action="error", message=_friendly_error_message(exc, payload.message), data={"type": "runtime"})
     except Exception as exc:
-        return ChatResponse(action="error", message=_friendly_error_message(exc), data={"type": "unexpected"})
+        return ChatResponse(action="error", message=_friendly_error_message(exc, payload.message), data={"type": "unexpected"})
 
 
 @app.post("/chat/widget", response_model=ChatResponse)
