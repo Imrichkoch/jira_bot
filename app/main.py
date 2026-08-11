@@ -1737,6 +1737,7 @@ def _extract_onboarding_recipient(text: str, parsed: dict[str, Any] | None = Non
     if email:
         return email.group(1)
     for pattern in [
+        r"\b(?:onboarding|onboarduj|onboard|nastup)\b[:\s-]+(.+)$",
         r"\b(?:pre|for|na|dostane|pridel(?:it|iť)?|prirad(?:it|iť)?|zamestnancovi|pouzivatelovi|používateľovi)\b[:\s-]+(.+)$",
         r"\b(?:meno|recipient|user|pouzivatel|používateľ)\b[:\s-]+(.+)$",
     ]:
@@ -1902,6 +1903,23 @@ def _assignment_value_for_user(attr: dict[str, Any], user: dict[str, Any]) -> st
     return display_name or email or str(user.get("accountId") or "").strip()
 
 
+def _optional_asset_status_update(raw_asset: dict[str, Any], value: str) -> dict[str, Any] | None:
+    for attr in raw_asset.get("attributes") or []:
+        object_type_attr = attr.get("objectTypeAttribute") or {}
+        if _normalize_lookup_text(str(object_type_attr.get("name") or "")) != "status":
+            continue
+        if object_type_attr.get("editable") is False:
+            return None
+        attr_id = str(object_type_attr.get("id") or "").strip()
+        if not attr_id:
+            return None
+        return {
+            "objectTypeAttributeId": attr_id,
+            "objectAttributeValues": [{"value": value}],
+        }
+    return None
+
+
 def _unassign_asset_from_user(asset: dict[str, Any], user_hint: str | None = None) -> dict[str, Any]:
     workspace_id = _require_assets_workspace()
     object_id_or_key = _asset_identity(asset)
@@ -1917,16 +1935,20 @@ def _unassign_asset_from_user(asset: dict[str, Any], user_hint: str | None = Non
     attr_id = _assignment_attr_id(assignment_attr)
     if not attr_id:
         raise RuntimeError(f"Assignment attribute on {object_id_or_key} has no id.")
+    attribute_updates = [
+        {
+            "objectTypeAttributeId": attr_id,
+            "objectAttributeValues": [],
+        }
+    ]
+    status_update = _optional_asset_status_update(raw_asset, "Available")
+    if status_update:
+        attribute_updates.append(status_update)
     updated = jira.update_asset_object(
         workspace_id=workspace_id,
         object_id_or_key=str(raw_asset.get("id") or object_id_or_key),
         object_type_id=object_type_id,
-        attributes=[
-            {
-                "objectTypeAttributeId": attr_id,
-                "objectAttributeValues": [],
-            }
-        ],
+        attributes=attribute_updates,
     )
     return {
         "object_key": raw_asset.get("objectKey") or object_id_or_key,
@@ -1956,16 +1978,20 @@ def _assign_asset_to_user(asset: dict[str, Any], user: dict[str, Any]) -> dict[s
     value = _assignment_value_for_user(assignment_attr, user)
     if not value:
         raise RuntimeError("Recipient user has no usable display value.")
+    attribute_updates = [
+        {
+            "objectTypeAttributeId": attr_id,
+            "objectAttributeValues": [{"value": value}],
+        }
+    ]
+    status_update = _optional_asset_status_update(raw_asset, "In use")
+    if status_update:
+        attribute_updates.append(status_update)
     updated = jira.update_asset_object(
         workspace_id=workspace_id,
         object_id_or_key=str(raw_asset.get("id") or object_id_or_key),
         object_type_id=object_type_id,
-        attributes=[
-            {
-                "objectTypeAttributeId": attr_id,
-                "objectAttributeValues": [{"value": value}],
-            }
-        ],
+        attributes=attribute_updates,
     )
     return {
         "object_key": raw_asset.get("objectKey") or object_id_or_key,
@@ -2025,6 +2051,12 @@ def _complete_onboarding_asset_selection(pending: dict[str, Any], message: str) 
     if not selected_assets:
         selected_assets = _select_assets_from_message(message, assets)
     recipient = str(pending.get("recipient") or "").strip() or _extract_onboarding_recipient(message)
+    if not recipient and pending.get("type") == "onboarding_select_recipient":
+        # The previous bot turn explicitly requested a name or email, so a bare
+        # reply such as "Imrich Koch" is the recipient value.
+        candidate = message.strip(" .,:;!?()[]{}\"'")
+        if 2 <= len(candidate) <= 255:
+            recipient = candidate
     extra_text = str(pending.get("extra_text") or "").strip() or _extract_extra_text(message)
 
     if not selected_assets:
