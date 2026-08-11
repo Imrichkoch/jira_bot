@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     jira_project_key: str
     jira_default_issue_type: str = "Task"
     openai_api_key: str
-    openai_model: str = "gpt-5-mini"
+    openai_model: str = "gpt-5.6-luna"
     openai_base_url: str | None = None
     openrouter_site_url: str | None = None
     openrouter_app_name: str = "jira-ai-ticket-bot"

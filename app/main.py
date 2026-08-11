@@ -24,6 +24,8 @@ from app.config import get_settings
 from app.jira_client import JiraClient
 from app.jql_guard import JQLValidationError, validate_jql
 from app.offboarding_documents import OffboardingTemplateStore, render_offboarding_document
+from app.reporting import build_ticket_report
+from app.rag_store import RagStore
 from app.runtime_settings import RuntimeSettingsStore
 from app.schemas import (
     CreateTicketRequest,
@@ -65,6 +67,7 @@ admin_store = AdminStore(DATA_DIR / "admin.sqlite3")
 admin_store.bootstrap_admin(settings.admin_bootstrap_username, settings.admin_bootstrap_password)
 template_store = OffboardingTemplateStore(DATA_DIR, root_name="offboarding_templates")
 onboarding_template_store = OffboardingTemplateStore(DATA_DIR, root_name="onboarding_templates")
+rag_store = RagStore(DATA_DIR)
 jira = JiraClient(settings)
 ai = AIClient(settings, runtime_context=runtime_settings.ai_context)
 STATIC_DIR = BASE_DIR / "static"
@@ -77,7 +80,7 @@ _SECURITY_SECRET = (settings.widget_shared_secret or "").strip() or secrets.toke
 class RestrictedStaticFiles(StaticFiles):
     async def get_response(self, path: str, scope: dict[str, Any]) -> Any:
         first_segment = path.replace("\\", "/").split("/", 1)[0].lower()
-        if first_segment in {"offboarding", "onboarding", "protocols"}:
+        if first_segment in {"offboarding", "onboarding", "protocols", "reports"}:
             raise StarletteHTTPException(status_code=404)
         return await super().get_response(path, scope)
 
@@ -90,6 +93,7 @@ MODEL_CATALOG = [
         "provider": "OpenAI direct",
         "note": "Direct OpenAI models. Use these when OPENAI_BASE_URL is empty.",
         "models": [
+            {"id": "gpt-5.6-luna", "label": "GPT-5.6 Luna"},
             {"id": "gpt-5.4-mini", "label": "GPT-5.4 Mini"},
             {"id": "gpt-5.4", "label": "GPT-5.4"},
             {"id": "gpt-5.3-codex", "label": "GPT-5.3 Codex"},
@@ -102,6 +106,7 @@ MODEL_CATALOG = [
         "provider": "OpenAI via OpenRouter",
         "note": "OpenRouter model IDs. Requires OPENAI_BASE_URL=https://openrouter.ai/api/v1.",
         "models": [
+            {"id": "openai/gpt-5.6-luna", "label": "OpenRouter: GPT-5.6 Luna"},
             {"id": "openai/gpt-5.5-pro", "label": "GPT-5.5 Pro"},
             {"id": "openai/gpt-5.5", "label": "GPT-5.5"},
             {"id": "openai/gpt-5.4-mini", "label": "OpenRouter: GPT-5.4 Mini"},
@@ -208,47 +213,47 @@ BOT_PERMISSIONS = [
     {
         "id": "chat",
         "label": "Chat",
-        "description": "Vseobecne odpovede a pomoc bez zapisu do Jira.",
+        "description": "General answers and help without writing to Jira.",
     },
     {
         "id": "tickets.read",
-        "label": "Tickety - citanie",
-        "description": "Vyhladavanie, zoznam a sumarizacia ticketov.",
+        "label": "Tickets - read",
+        "description": "Search, list, and summarize tickets.",
     },
     {
         "id": "tickets.write",
-        "label": "Tickety - vytvaranie",
-        "description": "Vytvaranie novych ticketov.",
+        "label": "Tickets - create",
+        "description": "Create new tickets.",
     },
     {
         "id": "tickets.assign",
-        "label": "Tickety - priradenie",
-        "description": "Priradovanie ticketov pouzivatelom.",
+        "label": "Tickets - assign",
+        "description": "Assign tickets to users.",
     },
     {
         "id": "tickets.close",
-        "label": "Tickety - zatvaranie",
-        "description": "Zatvaranie alebo riesenie ticketov.",
+        "label": "Tickets - close",
+        "description": "Close or resolve tickets.",
     },
     {
         "id": "users.read",
-        "label": "Jira pouzivatelia",
-        "description": "Zobrazenie Jira pouzivatelov cez bota.",
+        "label": "Jira users",
+        "description": "List Jira users through the bot.",
     },
     {
         "id": "assets.read",
-        "label": "Assets - citanie",
-        "description": "Vyhladavanie v Assets a zobrazenie zariadeni.",
+        "label": "Assets - read",
+        "description": "Search Assets and display devices.",
     },
     {
         "id": "assets.write",
-        "label": "Assets - zapis",
-        "description": "Priradenie alebo odobratie zariadeni v Assets.",
+        "label": "Assets - write",
+        "description": "Assign or unassign devices in Assets.",
     },
     {
         "id": "documents.generate",
-        "label": "Dokumenty",
-        "description": "Generovanie onboarding/offboarding protokolov.",
+        "label": "Documents",
+        "description": "Generate onboarding/offboarding documents.",
     },
 ]
 BOT_PERMISSION_IDS = {permission["id"] for permission in BOT_PERMISSIONS}
@@ -259,12 +264,14 @@ ACTION_PERMISSION_MAP = {
     "search": ["tickets.read"],
     "list_tickets": ["tickets.read"],
     "summarize": ["tickets.read"],
+    "report": ["tickets.read"],
     "similar": ["tickets.read"],
     "create": ["tickets.write"],
     "assign": ["tickets.assign"],
     "assign_bulk": ["tickets.assign"],
     "close": ["tickets.close"],
     "list_users": ["users.read"],
+    "offboarding_checklist": ["tickets.read"],
     "assets_search": ["assets.read"],
     "assets_owner": ["assets.read"],
     "assets_hw": ["assets.read"],
@@ -304,6 +311,13 @@ class BotSettingsRequest(BaseModel):
     model: str = Field(min_length=2, max_length=120)
     system_prompt: str = Field(min_length=1, max_length=8000)
     skills_md: str = Field(default="", max_length=20000)
+    rag_enabled: bool = False
+
+
+class RagDocumentRequest(BaseModel):
+    name: str = Field(default="", max_length=160)
+    file_name: str = Field(min_length=1, max_length=255)
+    content_base64: str = Field(min_length=1)
 
 
 class OffboardingTemplateRequest(BaseModel):
@@ -428,7 +442,7 @@ def _signed_download_url(kind: str, file_name: str) -> str:
 
 
 def _generated_file_path(kind: str, file_name: str) -> Path:
-    if kind not in {"offboarding", "onboarding", "protocols"}:
+    if kind not in {"offboarding", "onboarding", "protocols", "reports"}:
         raise HTTPException(status_code=404, detail="Unknown download type.")
     safe_name = Path(file_name).name
     if safe_name != file_name or not safe_name:
@@ -658,10 +672,41 @@ def admin_update_settings(payload: BotSettingsRequest, admin: dict[str, Any] = D
             model=payload.model,
             system_prompt=payload.system_prompt,
             skills_md=payload.skills_md,
+            rag_enabled=payload.rag_enabled,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"settings": data, "available_models": AVAILABLE_MODELS, "model_catalog": MODEL_CATALOG}
+
+
+@app.get("/admin/api/rag-documents")
+def admin_list_rag_documents(admin: dict[str, Any] = Depends(_require_admin)) -> dict[str, Any]:
+    return {"documents": rag_store.list_documents(), "supported_extensions": sorted(RagStore.SUPPORTED_EXTENSIONS)}
+
+
+@app.post("/admin/api/rag-documents")
+def admin_add_rag_document(
+    payload: RagDocumentRequest,
+    admin: dict[str, Any] = Depends(_require_admin),
+) -> dict[str, Any]:
+    try:
+        document = rag_store.add_document(
+            name=payload.name,
+            file_name=payload.file_name,
+            content_base64=payload.content_base64,
+        )
+        return {"document": document, "documents": rag_store.list_documents()}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/admin/api/rag-documents/{document_id}")
+def admin_delete_rag_document(document_id: str, admin: dict[str, Any] = Depends(_require_admin)) -> dict[str, Any]:
+    try:
+        rag_store.delete_document(document_id)
+        return {"documents": rag_store.list_documents()}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/admin/api/offboarding-templates")
@@ -976,8 +1021,8 @@ def _bot_permission_error(
         return ChatResponse(
             action="forbidden",
             message=(
-                "Nemam potvrdenu identitu aktualneho Jira pouzivatela, preto tuto akciu nemozem spustit. "
-                "Skus to prosim z Jira panelu po obnove stranky, alebo poziadaj admina o kontrolu Forge appky."
+                "I cannot confirm the current Jira user identity, so I cannot run this action. "
+                "Please refresh the Jira panel or ask an admin to check the Forge app configuration."
             ),
             data={"required_permissions": required},
         )
@@ -988,8 +1033,8 @@ def _bot_permission_error(
     return ChatResponse(
         action="forbidden",
         message=(
-            "Na tuto akciu nemas v JiraBote nastavene prava. "
-            f"Chybajuce prava: {', '.join(missing)}."
+            "You do not have the required JiraBot permissions for this action. "
+            f"Missing permissions: {', '.join(missing)}."
         ),
         data={
             "account_id": account_id,
@@ -1096,7 +1141,7 @@ def _format_device_name(asset: dict[str, Any]) -> str:
     object_key = str(asset.get("objectKey") or "").strip()
     object_type = str(asset.get("objectType") or "").strip()
     parts = [p for p in [label, object_key] if p]
-    text = " - ".join(parts) if parts else "Nezname zariadenie"
+    text = " - ".join(parts) if parts else "Unknown device"
     if object_type:
         text = f"{text} ({object_type})"
     return text
@@ -1204,6 +1249,31 @@ def _extract_offboarding_person(text: str, parsed: dict[str, Any] | None = None)
     return cleaned if len(cleaned) >= 2 else None
 
 
+def _extract_offboarding_checklist_person(text: str, parsed: dict[str, Any] | None = None) -> str | None:
+    candidate = _extract_offboarding_person(text, parsed)
+    if not candidate:
+        candidate = _extract_person_after_pre(text)
+    if not candidate:
+        parsed_query = (parsed or {}).get("query")
+        candidate = parsed_query if isinstance(parsed_query, str) else None
+    if not candidate:
+        return None
+    candidate = re.split(
+        r"\b(?:podla|podľa|podla\s+pristupov|podľa\s+prístupov|pristupov|prístupov|access|jira|ticket|tiket)\b",
+        candidate,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    candidate = re.sub(
+        r"\b(?:offboarding|offboard|checklist|zoznam|pristupov|prístupov|pristupy|prístupy|pre|for)\b",
+        " ",
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    candidate = re.sub(r"\s+", " ", candidate).strip(" .,:;!?()[]{}\"'")
+    return candidate if len(candidate) >= 2 else None
+
+
 def _build_offboarding_document_context(
     user_identifier: str,
     extra_text: str | None,
@@ -1248,8 +1318,8 @@ def _build_offboarding_document_context(
 
     values = {
         "employee_name": employee_name,
-        "device_name": "\n".join(device_lines) if device_lines else "Bez priradeneho HW assetu",
-        "serial_number": "\n".join(serial_lines) if serial_lines else "Bez serioveho cisla",
+        "device_name": "\n".join(device_lines) if device_lines else "No assigned hardware asset",
+        "serial_number": "\n".join(serial_lines) if serial_lines else "No serial number",
         "extra_text": (extra_text or "").strip(),
     }
     return {
@@ -1427,18 +1497,18 @@ def _format_asset_choices(assets: list[dict[str, Any]]) -> str:
             suffixes.append(f"SN: {serial}")
         assigned = _asset_assigned_value(asset)
         if assigned:
-            suffixes.append(f"priradene: {assigned}")
+            suffixes.append(f"assigned: {assigned}")
         suffix = f" ({', '.join(suffixes)})" if suffixes else ""
         lines.append(f"{index}) {_format_device_name(asset)}{suffix}")
     return "\n".join(lines)
 
 
 def _offboarding_selection_prompt(user: dict[str, Any], assets: list[dict[str, Any]], extra_text: str = "") -> ChatResponse:
-    display_name = user.get("displayName") or user.get("display_name") or "používateľ"
+    display_name = user.get("displayName") or user.get("display_name") or "user"
     message = (
-        f"Našiel som tieto zariadenia pre {display_name}. Ktoré sa vracia firme?\n"
+        f"I found these devices for {display_name}. Which one is being returned to the company?\n"
         f"{_format_asset_choices(assets)}\n\n"
-        "Odpovedz číslom, Assets kľúčom (napr. CDX-4), názvom zariadenia alebo napíš \"všetky\"."
+        "Reply with a number, Assets key (for example CDX-4), device name, or write \"all\"."
     )
     return ChatResponse(
         action="offboarding_select_asset",
@@ -1521,21 +1591,21 @@ def _onboarding_selection_prompt(
     *,
     only_available: bool = True,
 ) -> ChatResponse:
-    who = f" pre {recipient}" if recipient else ""
-    availability_text = "voľné zariadenia" if only_available else "zariadenia"
+    who = f" for {recipient}" if recipient else ""
+    availability_text = "available devices" if only_available else "devices"
     message = (
-        f"Našiel som tieto {availability_text}{who}. Ktoré chceš odovzdať?\n"
+        f"I found these {availability_text}{who}. Which one do you want to hand over?\n"
         f"{_format_asset_choices(assets)}\n\n"
-        "Odpovedz číslom, Assets kľúčom alebo názvom zariadenia."
+        "Reply with a number, Assets key, or device name."
     )
     if not only_available:
         message = (
-            "Nenašiel som žiadne úplne voľné HW zariadenie, preto ukazujem aj aktuálne priradené kusy. "
-            "Vyber prepise priradenie v Assets.\n\n"
+            "I did not find any completely free hardware device, so I am also showing currently assigned devices. "
+            "Your selection will overwrite the assignment in Assets.\n\n"
             + message
         )
     if not recipient:
-        message += " Potom mi napíš aj meno človeka, ktorý ho dostane."
+        message += " Then send me the name of the person who will receive it."
     return ChatResponse(
         action="onboarding_select_asset",
         message=message,
@@ -1739,8 +1809,8 @@ def _complete_offboarding_asset_selection(pending: dict[str, Any], message: str)
         return ChatResponse(
             action="offboarding_select_asset",
             message=(
-                "Neviem jednoznacne vybrat zariadenie. "
-                "Napis prosim cislo zo zoznamu, Assets kluc ako CDX-4, alebo \"vsetky\".\n"
+                "I cannot identify the device unambiguously. "
+                "Please reply with a list number, an Assets key like CDX-4, or \"all\".\n"
                 f"{_format_asset_choices(assets)}"
             ),
             data=_pending_data(pending, total=len(assets), objects=assets),
@@ -1765,12 +1835,12 @@ def _complete_offboarding_asset_selection(pending: dict[str, Any], message: str)
     generated["unassign_errors"] = unassign_errors
     suffix = ""
     if unassign_results:
-        suffix += f" Odassignoval som {len(unassign_results)} zariadeni v Assets."
+        suffix += f" I unassigned {len(unassign_results)} device(s) in Assets."
     if unassign_errors:
-        suffix += f" Pozor: {len(unassign_errors)} zariadeni sa nepodarilo odassignovat."
+        suffix += f" Warning: {len(unassign_errors)} device(s) could not be unassigned."
     return ChatResponse(
         action="offboarding",
-        message=f"Offboarding dokument je pripraveny pre {generated['user']['display_name']}.{suffix}",
+        message=f"Offboarding document is ready for {generated['user']['display_name']}.{suffix}",
         data=generated,
     )
 
@@ -1787,8 +1857,8 @@ def _complete_onboarding_asset_selection(pending: dict[str, Any], message: str) 
         return ChatResponse(
             action="onboarding_select_asset",
             message=(
-                "Neviem jednoznacne vybrat zariadenie. "
-                "Napis prosim cislo zo zoznamu alebo Assets kluc ako CDX-4.\n"
+                "I cannot identify the device unambiguously. "
+                "Please reply with a list number or an Assets key like CDX-4.\n"
                 f"{_format_asset_choices(assets)}"
             ),
             data=_pending_data(pending, total=len(assets), objects=assets),
@@ -1799,7 +1869,7 @@ def _complete_onboarding_asset_selection(pending: dict[str, Any], message: str) 
         next_pending["selected_assets"] = selected_assets
         return ChatResponse(
             action="onboarding_select_recipient",
-            message="Komu sa ma zariadenie odovzdat? Napis meno alebo email pouzivatela.",
+            message="Who should receive this device? Send the user name or email.",
             data=_pending_data(next_pending, selected_assets=selected_assets),
         )
 
@@ -1807,7 +1877,7 @@ def _complete_onboarding_asset_selection(pending: dict[str, Any], message: str) 
     if not user:
         return ChatResponse(
             action="onboarding_select_recipient",
-            message=f"Pouzivatela '{recipient}' som nenasiel. Napis prosim presnejsie meno alebo email.",
+            message=f"I could not find user '{recipient}'. Please send a more precise name or email.",
             data=_pending_data(
                 {
                     "type": "onboarding_select_recipient",
@@ -1835,12 +1905,12 @@ def _complete_onboarding_asset_selection(pending: dict[str, Any], message: str) 
     generated["assign_errors"] = assign_errors
     suffix = ""
     if assign_results:
-        suffix += f" Priradil som {len(assign_results)} zariadeni v Assets."
+        suffix += f" I assigned {len(assign_results)} device(s) in Assets."
     if assign_errors:
-        suffix += f" Pozor: {len(assign_errors)} zariadeni sa nepodarilo priradit."
+        suffix += f" Warning: {len(assign_errors)} device(s) could not be assigned."
     return ChatResponse(
         action="onboarding",
-        message=f"Onboarding dokument je pripraveny pre {generated['user']['display_name']}.{suffix}",
+        message=f"Onboarding document is ready for {generated['user']['display_name']}.{suffix}",
         data=generated,
     )
 
@@ -1848,17 +1918,23 @@ def _complete_onboarding_asset_selection(pending: dict[str, Any], message: str) 
 def _friendly_error_message(error: Exception | str) -> str:
     text = str(error)
     lowered = text.lower()
+    if "access to assets api was denied" in lowered or ("status_code" in lowered and "403" in lowered and "assets" in lowered):
+        return (
+            "The Jira API token works, but the account used by the bot does not have access to the Jira Assets API. "
+            "Add the required Assets permissions in Atlassian/Jira Service Management for the target schema, for example Object Schema User/Manager, "
+            "or Assets administrator depending on whether the bot should only read or also assign devices."
+        )
     if "jql" in lowered or "reserved word" in lowered or "vyhraden" in lowered:
         return (
-            "Tomuto som nerozumel ako Jira vyhľadávaniu a nechcem ti vracať technickú chybu. "
-            "Skús to prosím napísať prirodzenejšie, napríklad: „daj mi zoznam userov“, "
-            "„aké máme tickety“ alebo „nájdi otvorené tickety o notebooku“."
+            "I could not understand this as a Jira search, and I do not want to show you a technical error. "
+            "Please phrase it more naturally, for example: \"list users\", "
+            "\"show tickets\", or \"find open tickets about laptops\"."
         )
     if "no jira user found" in lowered or "pouzivatela" in lowered or "user found" in lowered:
-        return "Používateľa som nenašiel. Skús prosím celé meno alebo email."
+        return "I could not find that user. Please try the full name or email."
     if "assets" in lowered:
-        return "V Assets sa niečo nepodarilo načítať alebo upraviť. Skús prosím presnejší názov zariadenia alebo používateľa."
-    return "Niečo sa nepodarilo, ale nebudem ťa trápiť technickou chybou. Skús to prosím povedať ešte raz trochu konkrétnejšie."
+        return "Something failed while reading or updating Assets. Please try a more precise device name or user."
+    return "Something went wrong, but I will spare you the technical details. Please try again with a bit more detail."
 
 
 def _extract_issue_key_from_history(history: list[dict[str, str]] | None) -> str | None:
@@ -2295,13 +2371,13 @@ def assets_print_protocol(payload: AssetsPrintProtocolRequest, api_access: dict[
                     user_assets = hw_assets
             if user_assets:
                 lines = [
-                    "# Odovzdavaci Protokol",
+                    "# Handover Protocol",
                     "",
-                    f"Pouzivatel: {matched_user.get('displayName')}",
+                    f"User: {matched_user.get('displayName')}",
                 ]
                 if matched_user.get("emailAddress"):
                     lines.append(f"Email: {matched_user.get('emailAddress')}")
-                lines.extend(["", "## Pridelene zariadenia"])
+                lines.extend(["", "## Assigned devices"])
                 for asset in user_assets[:25]:
                     lines.append(f"- {asset.get('objectKey')}: {asset.get('label')} ({asset.get('objectType')})")
                     attrs = asset.get("attributes") or {}
@@ -2312,11 +2388,11 @@ def assets_print_protocol(payload: AssetsPrintProtocolRequest, api_access: dict[
                 lines.extend(
                     [
                         "",
-                        "## Potvrdenie",
-                        "- Datum odovzdania: __________",
-                        "- Odovzdal: __________",
-                        "- Prevzal: __________",
-                        "- Poznamka: __________",
+                        "## Confirmation",
+                        "- Handover date: __________",
+                        "- Handed over by: __________",
+                        "- Received by: __________",
+                        "- Note: __________",
                     ]
                 )
                 return AssetsPrintProtocolResponse(object_query=payload.object_query, protocol="\n".join(lines))
@@ -2339,7 +2415,7 @@ def assets_print_protocol(payload: AssetsPrintProtocolRequest, api_access: dict[
             raise HTTPException(status_code=404, detail="No Assets object found.")
         attrs = obj.get("attributes", {})
         lines = [
-            f"# Odovzdavaci Protokol",
+            f"# Handover Protocol",
             f"",
             f"Object: {obj.get('label')}",
             f"Object Key: {obj.get('objectKey')}",
@@ -2352,11 +2428,11 @@ def assets_print_protocol(payload: AssetsPrintProtocolRequest, api_access: dict[
         lines.extend(
             [
                 "",
-                "## Potvrdenie",
-                "- Datum odovzdania: __________",
-                "- Odovzdal: __________",
-                "- Prevzal: __________",
-                "- Poznamka: __________",
+                "## Confirmation",
+                "- Handover date: __________",
+                "- Handed over by: __________",
+                "- Received by: __________",
+                "- Note: __________",
             ]
         )
         return AssetsPrintProtocolResponse(object_query=payload.object_query, protocol="\n".join(lines))
@@ -2413,6 +2489,10 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
         create_hint = bool(re.search(r"\b(vytvor|sprav|vyrob|create|make)\b", lower_message)) and "ticket" in lower_message
         search_hint = bool(re.search(r"\b(najdi|hladaj|search|find|list|vypis)\b", lower_message))
         summarize_hint = bool(re.search(r"\b(summary|summar|zhrn|sumariz|sprav summary)\b", lower_message))
+        offboarding_checklist_hint = bool(
+            re.search(r"\b(checklist|zoznam\s+pristup|zoznam\s+prístup|access\s+audit|audit\s+pristup|audit\s+prístup)\b", normalized_message)
+            and re.search(r"\b(offboarding|offboard|ukoncenie|ukončenie|konci|contract|pristup|prístup|access|jira)\b", normalized_message)
+        )
         offboarding_doc_hint = bool(
             re.search(
                 r"\b(offboarding|offboard|offboardovat|ofboarding|ofbord|offbord|offbordnig|offbordnigovat|ofbordnigovat|ukoncenie|ukončenie)\b",
@@ -2437,6 +2517,10 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
         )
         asset_key_print_hint = bool(re.search(r"\b[A-Z]{2,10}-\d+\b", payload.message.upper()))
         help_hint = bool(re.search(r"\b(help|pomoc|co vies|co dokazes|what can you do|capabilities)\b", lower_message))
+        report_hint = bool(
+            re.search(r"\b(report|graf|graph|chart|dashboard|statistik|statistics|trend)\b", normalized_message)
+            and re.search(r"\b(ticket\w*|tiket\w*|issue\w*|priorit\w*|status\w*|stav\w*|assignee\w*|assigned\w*|priraden\w*|vytvoren\w*|created\w*)\b", normalized_message)
+        )
         whoami_hint = bool(
             re.search(
                 r"\b(kto som|kym som|ak[ýy] som user|aky som user|moj ucet|m[oô]j ucet|who am i|current user)\b",
@@ -2452,7 +2536,7 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
             "ticket" in lower_message or "tiket" in lower_message or _extract_issue_key(payload.message) is not None
         )
         list_users_hint = bool(
-            re.search(r"\b(zoznam|vypis|list|kto su|ake mame|akych mame|daj mi|ukaz)\b", normalized_message)
+            re.search(r"\b(zoznam|vypis|zobraz|list|kto su|ake mame|akych mame|daj mi|ukaz)\b", normalized_message)
             and re.search(
                 r"\b(user|useri|userov|users|uzivatel|uzivatelia|uzivatelov|pouzivatel|pouzivatelia|pouzivatelov|admin|admini|adminov|admins)\b",
                 normalized_message,
@@ -2460,7 +2544,7 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
         )
         list_tickets_hint = bool(
             re.search(r"\b(zoznam|vypis|list|ake mame|akych mame|daj mi|ukaz)\b", normalized_message)
-            and re.search(r"\b(ticket|tickets|tiket|tickety|tiketov|issue|issues)\b", normalized_message)
+            and re.search(r"\b(ticket|tickets|ticketov|tiket|tickety|tiketov|issue|issues)\b", normalized_message)
         )
         hw_person_hint = bool(re.search(r"\b(laptop|notebook|pc|computer|hardware|zariadenie|zariadenia)\b", lower_message)) and bool(
             re.search(r"\b(ma|má|mam|mám|moje|moj|môj|has)\b", lower_message)
@@ -2478,10 +2562,16 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
         action = str(parsed.get("action", "")).lower().strip()
         if whoami_hint:
             action = "whoami"
+        elif report_hint:
+            # A report request can naturally contain "show/list tickets" too.
+            # Prefer the explicit graph/report intent over a plain ticket list.
+            action = "report"
         elif list_users_hint:
             action = "list_users"
         elif list_tickets_hint:
             action = "list_tickets"
+        elif offboarding_checklist_hint:
+            action = "offboarding_checklist"
         elif onboarding_doc_hint:
             action = "onboarding"
         elif offboarding_doc_hint:
@@ -2519,7 +2609,7 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
             bulk = _assign_all_unassigned(assignee_query, max_results=500)
             return ChatResponse(
                 action="assign_bulk",
-                message=f"Hotovo. Priradil som {bulk['assigned_count']} neassignovanych ticketov na {bulk['assignee_display_name']}.",
+                message=f"Done. I assigned {bulk['assigned_count']} unassigned ticket(s) to {bulk['assignee_display_name']}.",
                 data=bulk,
             )
 
@@ -2567,7 +2657,7 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
             summary = ai.summarize_issue({"issue": issue, "comments": comments.get("comments", [])})
             return ChatResponse(
                 action="summarize",
-                message=f"Summary ready for {issue_key}",
+                message=f"Ticket summary for {issue_key}:\n{summary}",
                 data={"issue_key": issue_key, "summary": summary},
             )
 
@@ -2587,21 +2677,25 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
                     detail="Assignee missing. Example: 'prirad KAN-12 na imrich'.",
                 )
             wants_all = bool(re.search(r"\b(vsetky|všetky|all|neassignovane|nepriradene)\b", lower_message))
-            if wants_all and not issue_key:
-                bulk = _assign_all_unassigned(assignee_query, max_results=500)
-                return ChatResponse(
-                    action="assign_bulk",
-                    message=f"Hotovo. Priradil som {bulk['assigned_count']} neassignovanych ticketov na {bulk['assignee_display_name']}.",
-                    data=bulk,
-                )
+            # An explicit bulk request must not silently target the Jira panel's current issue.
+            if wants_all:
+                issue_key = None
             if not issue_key:
                 user = _resolve_assignee_user(assignee_query)
+                if not wants_all:
+                    return ChatResponse(
+                        action="chat",
+                        message=(
+                            f"Mám priradiť ticket používateľovi {user.get('displayName')}. "
+                            "Napíš prosím konkrétny kľúč, napríklad: „priraď KAN-3 mne“."
+                        ),
+                        data=None,
+                    )
                 return ChatResponse(
                     action="chat",
                     message=(
-                        f"Nasiel som pouzivatela {user.get('displayName')}. "
-                        "Chces, aby som mu priradil vsetky neassignovane tickety? "
-                        "Napis \"vsetky\" alebo \"ano\"."
+                        f"Našiel som používateľa {user.get('displayName')}. Chceš priradiť všetky nepriradené "
+                        "tickety? Potvrď to odpoveďou „áno“."
                     ),
                     data=_pending_data({"type": "assign_all_unassigned", "assignee_query": assignee_query}),
                 )
@@ -2620,24 +2714,28 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
                 or _extract_issue_key_from_history(payload.history)
             )
             if not issue_key:
-                raise HTTPException(status_code=400, detail="Issue key missing. Example: zavri KAN-11")
+                return ChatResponse(
+                    action="chat",
+                    message="Ktorý ticket mám uzavrieť? Napíš jeho kľúč, napríklad: „zavri KAN-11“.",
+                    data=None,
+                )
             closed = _close_issue(issue_key)
             if closed.get("changed"):
-                msg = f"Jasne, ticket {issue_key} som uzavrel. Novy status: {closed.get('status')}."
+                msg = f"Done, I closed ticket {issue_key}. New status: {closed.get('status')}."
             else:
-                msg = f"Ticket {issue_key} je uz uzavrety (status: {closed.get('status')})."
+                msg = f"Ticket {issue_key} is already closed (status: {closed.get('status')})."
             return ChatResponse(action="close", message=msg, data=closed)
 
         if action == "whoami":
             if not current_user:
                 return ChatResponse(
                     action="whoami",
-                    message="V Jira paneli zatiaľ nevidím identitu aktuálneho používateľa. Skús po redeployi Forge appky.",
+                    message="I cannot see the current Jira user identity in the Jira panel yet. Try again after redeploying the Forge app.",
                     data=None,
                 )
             return ChatResponse(
                 action="whoami",
-                message=f"Komunikuješ ako {current_user_label}.",
+                message=f"You are communicating as {current_user_label}.",
                 data={
                     "current_user": {
                         "display_name": current_user.get("displayName"),
@@ -2661,7 +2759,7 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
             ]
             return ChatResponse(
                 action="list_users",
-                message=f"Našiel som {len(mapped)} používateľov.",
+                message=f"I found {len(mapped)} user(s).",
                 data={"users": mapped},
             )
 
@@ -2689,43 +2787,67 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
                 )
             return ChatResponse(
                 action="list_tickets",
-                message=f"Našiel som {len(issues)} tiketov.",
+                message=f"I found {len(issues)} ticket(s).",
                 data={"jql": f"project = {settings.jira_project_key} ORDER BY updated DESC", "total": len(issues), "issues": issues},
+            )
+
+        if action == "report":
+            report = build_ticket_report(
+                jira=jira,
+                project_key=settings.jira_project_key,
+                message=payload.message,
+                output_dir=GENERATED_DIR / "reports",
+            )
+            report["chart_url"] = _signed_download_url("reports", report["files"]["chart"])
+            report["pdf_url"] = _signed_download_url("reports", report["files"]["pdf"])
+            report["xlsx_url"] = _signed_download_url("reports", report["files"]["xlsx"])
+            return ChatResponse(
+                action="report",
+                message=f"Report ready: {report['title']} ({report['total']} ticket(s)).",
+                data=report,
             )
 
         if action == "help":
             lines = [
-                "Viem pracovat s Jira ticketmi cez chat:",
-                "1) Vytvorit ticket: \"vytvor ticket: ...\"",
-                "2) Vytvorit viac ticketov: \"sprav 5 ticketov ...\"",
-                "3) Najst tickety textom: \"najdi otvorene tickety o ...\"",
-                "4) Spravit summary: \"sprav summary pre KAN-1\"",
-                "5) Priradit ticket: \"prirad KAN-12 na imrich\"",
-                "6) Uzavriet ticket: \"zavri KAN-11\"",
-                "7) Zoznam ticketov: \"daj mi zoznam tiketov\"",
-                "8) Zoznam userov: \"daj mi zoznam userov\"",
-                "9) Offboarding checklist podla pristupov v Jira",
+                "I can work with Jira tickets through chat:",
+                "1) Create a ticket: \"create ticket: ...\"",
+                "2) Create multiple tickets: \"create 5 tickets ...\"",
+                "3) Search tickets by text: \"find open tickets about ...\"",
+                "4) Summarize a ticket: \"summarize KAN-1\"",
+                "5) Assign a ticket: \"assign KAN-12 to imrich\"",
+                "6) Close a ticket: \"close KAN-11\"",
+                "7) List tickets: \"list tickets\"",
+                "8) List users: \"list users\"",
+                "9) Offboarding checklist based on Jira access tickets",
+                "10) Reports with charts and PDF/Excel export: \"create a chart of tickets by priority\"",
             ]
             if _assets_enabled():
                 lines.extend(
                     [
-                        "10) Assets lookup: owner, HW inventory, job/file, SLA, DORA relevance",
-                        "11) Assets print protocol (odovzdavaci protokol)",
+                        "11) Assets lookup: owner, HW inventory, job/file, SLA, DORA relevance",
+                        "12) Assets print protocol",
                     ]
                 )
-            lines.append("Tip: pis prirodzene, ja rozhodnem co mam urobit.")
+            lines.append("Tip: write naturally and I will decide what action to run.")
             help_text = "\n".join(lines)
             return ChatResponse(action="help", message=help_text, data=None)
 
         if action == "chat":
-            reply = ai.general_chat_reply(user_message=model_input, assets_enabled=_assets_enabled())
-            return ChatResponse(action="chat", message=reply, data=None)
+            rag_context, rag_sources = ("", [])
+            if runtime_settings.get().get("rag_enabled"):
+                rag_context, rag_sources = rag_store.context_for(payload.message)
+            reply = ai.general_chat_reply(
+                user_message=model_input,
+                assets_enabled=_assets_enabled(),
+                rag_context=rag_context,
+            )
+            return ChatResponse(action="chat", message=reply, data={"rag_sources": rag_sources} if rag_sources else None)
 
         if action in {"assets_search", "assets_owner", "assets_hw", "assets_job_file", "assets_dora", "assets_sla"}:
             if not _assets_enabled():
                 return ChatResponse(
                     action=action,
-                    message="Assets funkcie su docasne nedostupne, lebo nie je nastavene ASSETS_WORKSPACE_ID alebo chybaju prava.",
+                    message="Assets features are temporarily unavailable because ASSETS_WORKSPACE_ID is not configured or permissions are missing.",
                     data=None,
             )
             query_text = parsed.get("query") or payload.message
@@ -2736,18 +2858,18 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
                 if user and user_assets:
                     return ChatResponse(
                         action=action,
-                        message=f"Nasiel som {len(user_assets)} HW assetov pre {user.get('displayName')}.",
+                        message=f"I found {len(user_assets)} hardware asset(s) for {user.get('displayName')}.",
                         data={"total": len(user_assets), "objects": user_assets},
                     )
                 if user and not user_assets:
                     return ChatResponse(
                         action=action,
-                        message=f"Pre {user.get('displayName')} som nenasiel ziadny priradeny HW asset.",
+                        message=f"I did not find any assigned hardware asset for {user.get('displayName')}.",
                         data={"total": 0, "objects": []},
                     )
                 return ChatResponse(
                     action=action,
-                    message="Pouzivatela sa nepodarilo jednoznacne najst. Skus meno alebo email presnejsie.",
+                    message="I could not identify the user unambiguously. Try a more precise name or email.",
                     data={"total": 0, "objects": []},
                 )
             assets_result = _assets_search_from_nl(parsed.get("query") or payload.message, payload.max_results)
@@ -2757,12 +2879,30 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
                 data=assets_result.model_dump(),
             )
 
+        if action == "offboarding_checklist":
+            user_identifier = _extract_offboarding_checklist_person(payload.message, parsed)
+            if not user_identifier:
+                return ChatResponse(
+                    action="offboarding_checklist",
+                    message="Sure. Please send the person name or email, for example: offboarding checklist for Imrich Koch.",
+                    data=None,
+                )
+            checklist = offboarding_checklist(
+                OffboardingChecklistRequest(user_identifier=user_identifier),
+                api_access=api_access,
+            )
+            return ChatResponse(
+                action="offboarding_checklist",
+                message=f"Offboarding checklist for {checklist.user_identifier}:\n{checklist.checklist}",
+                data=checklist.model_dump(),
+            )
+
         if action == "offboarding":
             user_identifier = _extract_offboarding_person(payload.message, parsed)
             if not user_identifier:
                 return ChatResponse(
                     action="offboarding",
-                    message="Jasné. Napíš prosím meno alebo email človeka, napríklad: offboarding Imrich Koch.",
+                    message="Sure. Please send the person name or email, for example: offboarding Imrich Koch.",
                     data=None,
                 )
             if _assets_enabled():
@@ -2785,18 +2925,18 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
                                 only_available=True,
                             )
                             response.message = (
-                                f"Pre {matched_user.get('displayName')} som nenašiel priradený HW na vrátenie. "
-                                "Ak chceš pripraviť protokol na odovzdanie nového zariadenia, vyber jeden z voľných počítačov:\n"
+                                f"I did not find any assigned hardware to return for {matched_user.get('displayName')}. "
+                                "If you want to prepare a protocol for handing over a new device, choose one of the available computers:\n"
                                 + response.message.split("\n", 1)[1]
                             )
                             return response
                     return ChatResponse(
                         action="offboarding",
                         message=(
-                            f"Našiel som používateľa {matched_user.get('displayName')}, "
-                            "ale v Assets pri ňom nevidím žiadny priradený počítač. "
-                            "Aby bol protokol presný, napíš prosím konkrétny asset kľúč, napríklad `CDX-4`, "
-                            "alebo požiadaj o odovzdávací protokol na nový počítač."
+                            f"I found user {matched_user.get('displayName')}, "
+                            "but I do not see any assigned computer for them in Assets. "
+                            "To keep the protocol accurate, send a specific asset key, for example `CDX-4`, "
+                            "or ask for a handover protocol for a new computer."
                         ),
                         data={"user": matched_user, "total": 0, "objects": []},
                     )
@@ -2806,7 +2946,7 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
             )
             return ChatResponse(
                 action="offboarding",
-                message=f"Offboarding dokument je pripraveny pre {generated['user']['display_name']}.",
+                message=f"Offboarding document is ready for {generated['user']['display_name']}.",
                 data=generated,
             )
 
@@ -2814,7 +2954,7 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
             if not _assets_enabled():
                 return ChatResponse(
                     action="onboarding",
-                    message="Onboarding protokol je docasne nedostupny, lebo nie je nastavene ASSETS_WORKSPACE_ID alebo chybaju prava.",
+                    message="Onboarding protocol is temporarily unavailable because ASSETS_WORKSPACE_ID is not configured or permissions are missing.",
                     data=None,
                 )
             available_assets = _assets_available_for_onboarding(max_results=25)
@@ -2823,7 +2963,7 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
                 if not all_hw_assets:
                     return ChatResponse(
                         action="onboarding",
-                        message="Nenasiel som ziadne HW zariadenie v Assets.",
+                        message="I did not find any hardware device in Assets.",
                         data={"total": 0, "objects": []},
                     )
                 recipient = _extract_onboarding_recipient(payload.message, parsed)
@@ -2845,7 +2985,7 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
             if not _assets_enabled():
                 return ChatResponse(
                     action="assets_print",
-                    message="Assets print protocol je docasne nedostupny, lebo nie je nastavene ASSETS_WORKSPACE_ID alebo chybaju prava.",
+                    message="Assets print protocol is temporarily unavailable because ASSETS_WORKSPACE_ID is not configured or permissions are missing.",
                     data=None,
                 )
             protocol = assets_print_protocol(AssetsPrintProtocolRequest(object_query=parsed.get("query") or payload.message))
@@ -2868,7 +3008,7 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
         search_result = _search_logic(query, payload.max_results)
         return ChatResponse(
             action="search",
-            message=f"Našiel som {search_result.total} tiketov.",
+            message=f"I found {search_result.total} ticket(s).",
             data=search_result.model_dump(),
         )
     except HTTPException as exc:

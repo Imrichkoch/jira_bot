@@ -38,7 +38,8 @@ class SearchTicketsResponse(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(min_length=2, max_length=4000)
+    # Let the chat layer turn even a single emoji into a helpful prompt.
+    message: str = Field(min_length=1, max_length=4000)
     max_results: int = Field(default=20, ge=1, le=50)
     max_comments: int = Field(default=20, ge=0, le=100)
     current_issue_key: str | None = None

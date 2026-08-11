@@ -14,7 +14,7 @@ from typing import Any
 
 FIELD_DEFAULTS: dict[str, dict[str, Any]] = {
     "employee_name": {
-        "label": "Meno zamestnanca",
+        "label": "Employee name",
         "placeholder": "{{employee_name}}",
         "page": 1,
         "x_pct": 12,
@@ -22,7 +22,7 @@ FIELD_DEFAULTS: dict[str, dict[str, Any]] = {
         "font_size": 11,
     },
     "device_name": {
-        "label": "PC / zariadenie",
+        "label": "PC / device",
         "placeholder": "{{device_name}}",
         "page": 1,
         "x_pct": 12,
@@ -30,7 +30,7 @@ FIELD_DEFAULTS: dict[str, dict[str, Any]] = {
         "font_size": 11,
     },
     "serial_number": {
-        "label": "Seriove cislo",
+        "label": "Serial number",
         "placeholder": "{{serial_number}}",
         "page": 1,
         "x_pct": 12,
@@ -38,7 +38,7 @@ FIELD_DEFAULTS: dict[str, dict[str, Any]] = {
         "font_size": 11,
     },
     "extra_text": {
-        "label": "Doplnujuci text",
+        "label": "Extra text",
         "placeholder": "{{extra_text}}",
         "page": 1,
         "x_pct": 12,
@@ -297,14 +297,14 @@ def render_default_pdf(output_path: Path, values: dict[str, str]) -> None:
     width, height = A4
     y = height - 70
     c.setFont("Helvetica-Bold", 18)
-    c.drawString(56, y, "Offboarding - odovzdanie zariadenia")
+    c.drawString(56, y, "Offboarding - device handover")
     y -= 42
     c.setFont("Helvetica", 11)
     for label, key in [
-        ("Meno", "employee_name"),
-        ("PC / zariadenie", "device_name"),
-        ("Seriove cislo", "serial_number"),
-        ("Doplnujuci text", "extra_text"),
+        ("Name", "employee_name"),
+        ("PC / device", "device_name"),
+        ("Serial number", "serial_number"),
+        ("Extra text", "extra_text"),
     ]:
         c.setFont("Helvetica-Bold", 11)
         c.drawString(56, y, f"{label}:")
@@ -315,9 +315,9 @@ def render_default_pdf(output_path: Path, values: dict[str, str]) -> None:
             y -= 15
         y -= 8
     c.line(56, 155, width - 56, 155)
-    c.drawString(56, 120, "Odovzdal: ____________________")
-    c.drawString(330, 120, "Prevzal: ____________________")
-    c.drawString(56, 88, "Datum: ____________________")
+    c.drawString(56, 120, "Handed over by: ____________________")
+    c.drawString(330, 120, "Received by: ____________________")
+    c.drawString(56, 88, "Date: ____________________")
     c.save()
 
 
