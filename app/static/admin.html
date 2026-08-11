@@ -368,10 +368,6 @@
       </section>
 
       <section class="panel">
-<<<<<<< HEAD
-        <h2>JiraBot groups and permissions</h2>
-        <div class="muted">
-=======
         <h2>Authentication and LDAP</h2>
         <div class="muted">
           Local remains the default. Use Hybrid to keep a local break-glass administrator while allowing LDAP administrators.
@@ -420,7 +416,6 @@
       <section class="panel">
         <h2>JiraBot groups and permissions</h2>
         <div class="muted">
->>>>>>> origin/main
           If no group exists, JiraBot remains available as before.
           Once you create at least one group, a user must belong to a group with the required permission.
         </div>
@@ -676,11 +671,7 @@
       const me = await api("/admin/api/me");
       $("currentAdmin").textContent = `Prihlaseny: ${me.admin.display_name || me.admin.username}`;
       showLoggedIn(true);
-<<<<<<< HEAD
-      await Promise.all([loadSettings(), loadAdmins(), loadBotPermissions(), loadBotGroups(), loadTemplates(), loadRagDocuments()]);
-=======
       await Promise.all([loadSettings(), loadAdmins(), loadLdapSettings(), loadBotPermissions(), loadBotGroups(), loadTemplates(), loadRagDocuments()]);
->>>>>>> origin/main
     }
 
     async function loadSettings() {

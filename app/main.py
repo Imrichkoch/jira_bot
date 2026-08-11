@@ -70,10 +70,7 @@ admin_store.bootstrap_admin(settings.admin_bootstrap_username, settings.admin_bo
 template_store = OffboardingTemplateStore(DATA_DIR, root_name="offboarding_templates")
 onboarding_template_store = OffboardingTemplateStore(DATA_DIR, root_name="onboarding_templates")
 rag_store = RagStore(DATA_DIR)
-<<<<<<< HEAD
-=======
 ldap_settings = LdapSettingsStore(DATA_DIR)
->>>>>>> origin/main
 jira = JiraClient(settings)
 ai = AIClient(settings, runtime_context=runtime_settings.ai_context)
 STATIC_DIR = BASE_DIR / "static"
@@ -320,8 +317,6 @@ class BotSettingsRequest(BaseModel):
     rag_enabled: bool = False
 
 
-<<<<<<< HEAD
-=======
 class LdapSettingsRequest(BaseModel):
     mode: str = Field(default="local", max_length=20)
     server_url: str = Field(default="", max_length=255)
@@ -332,7 +327,6 @@ class LdapSettingsRequest(BaseModel):
     admin_group_dn: str = Field(default="", max_length=500)
 
 
->>>>>>> origin/main
 class RagDocumentRequest(BaseModel):
     name: str = Field(default="", max_length=160)
     file_name: str = Field(min_length=1, max_length=255)
@@ -724,8 +718,6 @@ def admin_update_settings(payload: BotSettingsRequest, admin: dict[str, Any] = D
     return {"settings": data, "available_models": AVAILABLE_MODELS, "model_catalog": MODEL_CATALOG}
 
 
-<<<<<<< HEAD
-=======
 @app.get("/admin/api/auth/ldap")
 def admin_get_ldap_settings(admin: dict[str, Any] = Depends(_require_admin)) -> dict[str, Any]:
     return {"settings": ldap_settings.get()}
@@ -754,7 +746,6 @@ def admin_test_ldap_connection(admin: dict[str, Any] = Depends(_require_admin)) 
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
->>>>>>> origin/main
 @app.get("/admin/api/rag-documents")
 def admin_list_rag_documents(admin: dict[str, Any] = Depends(_require_admin)) -> dict[str, Any]:
     return {"documents": rag_store.list_documents(), "supported_extensions": sorted(RagStore.SUPPORTED_EXTENSIONS)}
