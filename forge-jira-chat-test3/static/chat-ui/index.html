@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Jira AI Chat</title>
+  </head>
+  <body>
+    <main class="app">
+      <header class="head">
+        <div>
+          <div class="title">Jira AI Chat</div>
+          <div id="issue" class="issue">Issue: -</div>
+        </div>
+        <button id="popout" class="btn" type="button">Popout</button>
+      </header>
+      <section id="chat" class="chat"></section>
+      <form id="form" class="composer">
+        <textarea id="input" placeholder="Type what needs to be done..." required></textarea>
+        <button id="send" class="btn" type="submit">Send</button>
+      </form>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+  </html>

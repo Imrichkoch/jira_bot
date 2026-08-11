@@ -1,0 +1,46 @@
+app:
+  runtime:
+    name: nodejs22.x
+  id: ari:cloud:ecosystem::app/e987d61f-9ffd-40d0-8d81-f25164a8ee94
+
+modules:
+  jira:globalPage:
+    - key: jira-ai-chat-global
+      resource: chat-panel
+      resolver:
+        function: resolver
+      title: Jira AI Chat
+      layout: blank
+      icon: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
+  jira:issuePanel:
+    - key: jira-ai-chat-panel
+      resource: chat-panel
+      resolver:
+        function: resolver
+      title: Jira AI Chat
+      viewportSize: medium
+      icon: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
+  function:
+    - key: resolver
+      handler: index.handler
+
+resources:
+  - key: chat-panel
+    path: static/chat-ui/build
+  - key: chat-modal
+    path: static/chat-ui/build
+
+permissions:
+  scopes:
+    - read:jira-work
+    - read:jira-user
+    - write:jira-work
+  external:
+    fetch:
+      backend:
+        - "https://jira.raizenko.cloud"
+
+environment:
+  variables:
+    - BOT_BACKEND_URL
+    - BOT_WIDGET_SECRET
