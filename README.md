@@ -17,6 +17,13 @@ pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
+Linux/VPS deployments need LibreOffice Writer for DOCX template previews and DOCX-to-PDF document generation:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends libreoffice-writer fonts-dejavu-core fonts-liberation
+```
+
 Fill in `.env`:
 - `JIRA_BASE_URL`, for example `https://your-site.atlassian.net`
 - `JIRA_EMAIL`, your Atlassian login email
@@ -254,7 +261,8 @@ Admins can:
 - edit the system prompt
 - edit `skills.md`, which is included in AI instructions
 - upload onboarding/offboarding templates in DOCX/PDF format
-- configure DOCX placeholders and PDF positions for employee name, PC/device, serial number, and extra text
+- configure click-to-place positions for employee name, PC/device, serial number, and extra text
+- use DOCX files as source templates: JiraBot converts them with LibreOffice for an accurate PDF preview and generates the final document as PDF
 - configure optional LDAP/Active Directory administration login. Start in `Local` mode; `Hybrid` allows LDAP admins and local break-glass admins, while `LDAP` permits only members of the configured LDAP admin group. LDAP settings contain no password; the bind password is read from `LDAP_BIND_PASSWORD`.
 
 The first admin can be bootstrapped through environment variables:
