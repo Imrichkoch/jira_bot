@@ -781,6 +781,30 @@ def admin_list_offboarding_templates(admin: dict[str, Any] = Depends(_require_ad
     return {"templates": template_store.list_templates()}
 
 
+@app.get("/admin/api/offboarding-templates/{template_id}/file")
+def admin_get_offboarding_template_file(
+    template_id: str,
+    admin: dict[str, Any] = Depends(_require_admin),
+) -> FileResponse:
+    template = template_store.get(template_id)
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found.")
+    path = template_store.file_path(template)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Template file not found.")
+    media_type = (
+        "application/pdf"
+        if template.get("template_format") == "pdf"
+        else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=str(template.get("file_name") or path.name),
+        content_disposition_type="inline",
+    )
+
+
 @app.post("/admin/api/offboarding-templates")
 def admin_add_offboarding_template(
     payload: OffboardingTemplateRequest,
@@ -840,6 +864,30 @@ def admin_delete_offboarding_template(
 @app.get("/admin/api/onboarding-templates")
 def admin_list_onboarding_templates(admin: dict[str, Any] = Depends(_require_admin)) -> dict[str, Any]:
     return {"templates": onboarding_template_store.list_templates()}
+
+
+@app.get("/admin/api/onboarding-templates/{template_id}/file")
+def admin_get_onboarding_template_file(
+    template_id: str,
+    admin: dict[str, Any] = Depends(_require_admin),
+) -> FileResponse:
+    template = onboarding_template_store.get(template_id)
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found.")
+    path = onboarding_template_store.file_path(template)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Template file not found.")
+    media_type = (
+        "application/pdf"
+        if template.get("template_format") == "pdf"
+        else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=str(template.get("file_name") or path.name),
+        content_disposition_type="inline",
+    )
 
 
 @app.post("/admin/api/onboarding-templates")

@@ -248,6 +248,44 @@
       pointer-events: auto;
       background: rgba(12, 102, 228, 0.08);
     }
+    .docx-preview-wrap {
+      width: 100%;
+      max-height: 620px;
+      overflow: auto;
+      margin-top: 12px;
+      padding: 24px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #e9edf3;
+    }
+    .docx-preview {
+      width: min(100%, 820px);
+      min-height: 520px;
+      margin: 0 auto;
+      padding: 48px 56px;
+      background: #fff;
+      color: #172b4d;
+      box-shadow: 0 8px 24px rgba(9, 30, 66, 0.18);
+      line-height: 1.5;
+    }
+    .docx-preview table { width: 100%; border-collapse: collapse; }
+    .docx-preview td, .docx-preview th { border: 1px solid #c1c7d0; padding: 7px; }
+    .docx-preview img { max-width: 100%; height: auto; }
+    .docx-preview mark {
+      padding: 2px 4px;
+      border-radius: 3px;
+      background: #ffecb5;
+      color: #7a4d00;
+      font-weight: 700;
+    }
+    .format-note {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-left: 4px solid var(--accent);
+      border-radius: 4px;
+      background: #e9f2ff;
+      color: #172b4d;
+    }
     .templates {
       display: grid;
       gap: 10px;
@@ -490,43 +528,41 @@
           <div class="field-grid">
             <div class="field-card" data-field="employee_name">
               <label>Name</label>
-              <input id="field_employee_name_placeholder" value="{{employee_name}}" />
-              <input id="field_employee_name_page" value="1" />
-              <input id="field_employee_name_x" value="12" />
-              <input id="field_employee_name_y" value="24" />
-              <input id="field_employee_name_size" value="11" />
+              <input id="field_employee_name_placeholder" class="docx-config" value="{{employee_name}}" />
+              <input id="field_employee_name_page" class="pdf-config" value="1" />
+              <input id="field_employee_name_x" class="pdf-config" value="12" />
+              <input id="field_employee_name_y" class="pdf-config" value="24" />
+              <input id="field_employee_name_size" class="pdf-config" value="11" />
             </div>
             <div class="field-card" data-field="device_name">
               <label>PC / device</label>
-              <input id="field_device_name_placeholder" value="{{device_name}}" />
-              <input id="field_device_name_page" value="1" />
-              <input id="field_device_name_x" value="12" />
-              <input id="field_device_name_y" value="34" />
-              <input id="field_device_name_size" value="11" />
+              <input id="field_device_name_placeholder" class="docx-config" value="{{device_name}}" />
+              <input id="field_device_name_page" class="pdf-config" value="1" />
+              <input id="field_device_name_x" class="pdf-config" value="12" />
+              <input id="field_device_name_y" class="pdf-config" value="34" />
+              <input id="field_device_name_size" class="pdf-config" value="11" />
             </div>
             <div class="field-card" data-field="serial_number">
               <label>Serial number</label>
-              <input id="field_serial_number_placeholder" value="{{serial_number}}" />
-              <input id="field_serial_number_page" value="1" />
-              <input id="field_serial_number_x" value="12" />
-              <input id="field_serial_number_y" value="44" />
-              <input id="field_serial_number_size" value="11" />
+              <input id="field_serial_number_placeholder" class="docx-config" value="{{serial_number}}" />
+              <input id="field_serial_number_page" class="pdf-config" value="1" />
+              <input id="field_serial_number_x" class="pdf-config" value="12" />
+              <input id="field_serial_number_y" class="pdf-config" value="44" />
+              <input id="field_serial_number_size" class="pdf-config" value="11" />
             </div>
             <div class="field-card" data-field="extra_text">
               <label>Extra text</label>
-              <input id="field_extra_text_placeholder" value="{{extra_text}}" />
-              <input id="field_extra_text_page" value="1" />
-              <input id="field_extra_text_x" value="12" />
-              <input id="field_extra_text_y" value="54" />
-              <input id="field_extra_text_size" value="11" />
+              <input id="field_extra_text_placeholder" class="docx-config" value="{{extra_text}}" />
+              <input id="field_extra_text_page" class="pdf-config" value="1" />
+              <input id="field_extra_text_x" class="pdf-config" value="12" />
+              <input id="field_extra_text_y" class="pdf-config" value="54" />
+              <input id="field_extra_text_size" class="pdf-config" value="11" />
             </div>
           </div>
-          <div class="muted" style="margin-top: 8px;">
-            Input order in each card: DOCX placeholder, PDF page, PDF X %, PDF Y %, font size.
-          </div>
+          <div id="templateFormatNote" class="format-note"></div>
         </div>
 
-        <div style="margin-top: 14px;">
+        <div id="pdfPositionEditor" style="margin-top: 14px;">
           <div class="row">
             <div>
               <label for="pdfClickField">PDF click-to-place</label>
@@ -548,6 +584,10 @@
           </div>
         </div>
 
+        <div id="docxPreviewWrap" class="docx-preview-wrap hidden">
+          <div id="docxPreview" class="docx-preview"></div>
+        </div>
+
         <div id="templateStatus" class="status"></div>
         <div id="templatesList" class="templates"></div>
       </section>
@@ -555,6 +595,7 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mammoth@1.10.0/mammoth.browser.min.js"></script>
   <script>
     const tokenKey = "jiraBotAdminToken";
     const $ = (id) => document.getElementById(id);
@@ -562,7 +603,7 @@
     let templateMode = "offboarding";
     let pdfPlacing = false;
     let activeTemplateId = null;
-    let selectedPdfFile = null;
+    let selectedTemplateFile = null;
     let modelCatalog = [];
     let botPermissions = [];
     let botGroups = [];
@@ -591,6 +632,17 @@
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.detail || "Request failed");
       return body;
+    }
+
+    async function apiFile(path) {
+      const headers = {};
+      if (token()) headers.Authorization = `Bearer ${token()}`;
+      const res = await fetch(path, { headers });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || "Template file could not be loaded.");
+      }
+      return res.blob();
     }
 
     function showLoggedIn(show) {
@@ -649,6 +701,90 @@
         await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
         canvas.addEventListener("click", handlePdfPageClick);
       }
+    }
+
+    function highlightDocxPlaceholders(container) {
+      const placeholders = templateFields
+        .map((key) => $(`field_${key}_placeholder`).value.trim())
+        .filter(Boolean);
+      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+      const textNodes = [];
+      while (walker.nextNode()) textNodes.push(walker.currentNode);
+      for (const node of textNodes) {
+        const value = node.nodeValue || "";
+        const matches = placeholders
+          .flatMap((placeholder) => {
+            const rows = [];
+            let start = 0;
+            while (start < value.length) {
+              const index = value.indexOf(placeholder, start);
+              if (index < 0) break;
+              rows.push({ index, placeholder });
+              start = index + placeholder.length;
+            }
+            return rows;
+          })
+          .sort((a, b) => a.index - b.index);
+        if (!matches.length) continue;
+        const fragment = document.createDocumentFragment();
+        let cursor = 0;
+        for (const match of matches) {
+          if (match.index < cursor) continue;
+          if (match.index > cursor) fragment.appendChild(document.createTextNode(value.slice(cursor, match.index)));
+          const mark = document.createElement("mark");
+          mark.textContent = match.placeholder;
+          mark.title = "JiraBot replaces this placeholder when generating the document";
+          fragment.appendChild(mark);
+          cursor = match.index + match.placeholder.length;
+        }
+        if (cursor < value.length) fragment.appendChild(document.createTextNode(value.slice(cursor)));
+        node.replaceWith(fragment);
+      }
+    }
+
+    async function renderDocxPreview(file) {
+      if (!window.mammoth) {
+        setStatus("templateStatus", "DOCX preview could not be loaded. Try refreshing the page.", true);
+        return;
+      }
+      const result = await mammoth.convertToHtml({ arrayBuffer: await file.arrayBuffer() });
+      const preview = $("docxPreview");
+      preview.innerHTML = result.value || "<p>This document has no previewable content.</p>";
+      highlightDocxPlaceholders(preview);
+      $("docxPreviewWrap").classList.remove("hidden");
+      if (result.messages && result.messages.length) {
+        setStatus("templateStatus", "DOCX preview loaded. Complex Word formatting may be simplified in the browser preview.");
+      }
+    }
+
+    function updateTemplateFormatUi() {
+      const isPdf = $("templateFormat").value === "pdf";
+      document.querySelectorAll(".docx-config").forEach((el) => el.classList.toggle("hidden", isPdf));
+      document.querySelectorAll(".pdf-config").forEach((el) => el.classList.toggle("hidden", !isPdf));
+      $("pdfPositionEditor").classList.toggle("hidden", !isPdf);
+      if (isPdf) {
+        $("docxPreviewWrap").classList.add("hidden");
+        $("templateFormatNote").textContent = "PDF mode: select a field, enable placement mode, then click its exact position in the PDF preview.";
+      } else {
+        $("pdfPreviewWrap").classList.add("hidden");
+        $("templateFormatNote").textContent = "DOCX mode: place the shown placeholders directly in the Word document. Their location in Word is the final location; PDF coordinates are not used.";
+        setPdfPlacing(false);
+      }
+    }
+
+    async function previewTemplate(template) {
+      setStatus("templateStatus", `Loading preview for ${template.name}...`);
+      const blob = await apiFile(`/admin/api/${templateMode}-templates/${template.id}/file`);
+      const file = new File([blob], template.file_name || `template.${template.template_format}`, { type: blob.type });
+      selectedTemplateFile = file;
+      $("templateFormat").value = template.template_format;
+      updateTemplateFormatUi();
+      if (template.template_format === "pdf") {
+        await renderPdfPreview(file);
+      } else {
+        await renderDocxPreview(file);
+      }
+      setStatus("templateStatus", `Preview for ${template.name} loaded.`);
     }
 
     function handlePdfPageClick(event) {
@@ -967,6 +1103,19 @@
           <div class="template-actions"></div>
         `;
         const actions = item.querySelector(".template-actions");
+        const preview = document.createElement("button");
+        preview.type = "button";
+        preview.className = "secondary";
+        preview.textContent = "Preview";
+        preview.addEventListener("click", async () => {
+          try {
+            applyTemplateFields(template.fields || {});
+            activeTemplateId = template.id;
+            await previewTemplate(template);
+          } catch (err) {
+            setStatus("templateStatus", err.message, true);
+          }
+        });
         const activate = document.createElement("button");
         activate.type = "button";
         activate.className = "secondary";
@@ -980,10 +1129,15 @@
         loadFields.type = "button";
         loadFields.className = "secondary";
         loadFields.textContent = "Nacitat pozicie";
-        loadFields.addEventListener("click", () => {
+        loadFields.addEventListener("click", async () => {
           activeTemplateId = template.id;
           applyTemplateFields(template.fields || {});
-          setStatus("templateStatus", `Positions from template ${template.name} were loaded into the form.`);
+          try {
+            await previewTemplate(template);
+            setStatus("templateStatus", `Settings and preview from template ${template.name} were loaded.`);
+          } catch (err) {
+            setStatus("templateStatus", err.message, true);
+          }
         });
         const saveFields = document.createElement("button");
         saveFields.type = "button";
@@ -1007,6 +1161,7 @@
           await api(`/admin/api/${templateMode}-templates/${template.id}`, { method: "DELETE" });
           await loadTemplates();
         });
+        actions.appendChild(preview);
         actions.appendChild(activate);
         actions.appendChild(loadFields);
         actions.appendChild(saveFields);
@@ -1155,26 +1310,32 @@
       const file = $("templateFile").files[0];
       if (!file) return;
       const ext = file.name.toLowerCase().endsWith(".pdf") ? "pdf" : "docx";
-      selectedPdfFile = ext === "pdf" ? file : null;
+      selectedTemplateFile = file;
       $("templateFormat").value = ext;
+      updateTemplateFormatUi();
       if (!$("templateName").value.trim()) {
         $("templateName").value = file.name.replace(/\.[^.]+$/, "");
       }
-      if (ext === "pdf") {
-        await renderPdfPreview(file);
+      try {
+        if (ext === "pdf") {
+          await renderPdfPreview(file);
+        } else {
+          await renderDocxPreview(file);
+        }
         setPdfPlacing(false);
-      } else {
-        $("pdfPreviewWrap").innerHTML = "";
-        $("pdfPreviewWrap").classList.add("hidden");
-        setPdfPlacing(false);
+      } catch (err) {
+        setStatus("templateStatus", err.message, true);
       }
     });
 
     $("templateFormat").addEventListener("change", () => {
-      if ($("templateFormat").value === "pdf" && selectedPdfFile) {
-        renderPdfPreview(selectedPdfFile).catch((err) => setStatus("templateStatus", err.message, true));
-      } else {
-        $("pdfPreviewWrap").classList.add("hidden");
+      updateTemplateFormatUi();
+      if (selectedTemplateFile) {
+        const fileIsPdf = selectedTemplateFile.name.toLowerCase().endsWith(".pdf");
+        const selectedIsPdf = $("templateFormat").value === "pdf";
+        if (fileIsPdf !== selectedIsPdf) {
+          setStatus("templateStatus", "The selected format must match the uploaded file extension.", true);
+        }
       }
       setPdfPlacing(false);
     });
@@ -1210,9 +1371,11 @@
         });
         $("templateFile").value = "";
         $("templateName").value = "";
-        selectedPdfFile = null;
+        selectedTemplateFile = null;
         $("pdfPreviewWrap").innerHTML = "";
         $("pdfPreviewWrap").classList.add("hidden");
+        $("docxPreview").innerHTML = "";
+        $("docxPreviewWrap").classList.add("hidden");
         setPdfPlacing(false);
         setStatus("templateStatus", "Template saved and activated.");
         await loadTemplates();
@@ -1241,6 +1404,7 @@
       }
     });
 
+    updateTemplateFormatUi();
     if (token()) {
       loadAll().catch(() => {
         localStorage.removeItem(tokenKey);
