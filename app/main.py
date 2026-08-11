@@ -1039,9 +1039,22 @@ def _assets_enabled() -> bool:
     return bool(settings.assets_workspace_id)
 
 
+def _is_available_assets_query(nl_query: str) -> bool:
+    normalized = _normalize_lookup_text(nl_query)
+    asks_for_laptops = any(term in normalized for term in ("laptop", "notebook", "pocitac"))
+    asks_for_available = any(term in normalized for term in ("voln", "dostupn", "available", "unassigned"))
+    return asks_for_laptops and asks_for_available
+
+
+def _assets_aql_hint(nl_query: str) -> str | None:
+    if _is_available_assets_query(nl_query):
+        return 'objectType = "Laptop" AND Status = "Available"'
+    return None
+
+
 def _assets_search_from_nl(nl_query: str, max_results: int) -> AssetsQueryResponse:
     workspace_id = _require_assets_workspace()
-    aql = ai.generate_aql(user_query=nl_query)
+    aql = _assets_aql_hint(nl_query) or ai.generate_aql(user_query=nl_query)
     data = None
     used_aql = aql
     used_fallback = False
@@ -1062,7 +1075,12 @@ def _assets_search_from_nl(nl_query: str, max_results: int) -> AssetsQueryRespon
         objects_raw = data.get("objectEntries") or data.get("results", {}).get("objectEntries") or data.get("values") or []
     objects = [flatten_assets_object(obj) for obj in objects_raw]
     if used_aql == "objectId > 0" and nl_query.strip():
-        terms = [t for t in re.findall(r"[a-zA-Z0-9]{2,}", nl_query.lower()) if t not in {"najdi", "find", "assets"}]
+        normalized_query = _normalize_lookup_text(nl_query)
+        terms = [
+            t
+            for t in re.findall(r"[a-z0-9]{2,}", normalized_query)
+            if t not in {"najdi", "find", "assets", "ukaz", "volne", "dostupne", "available", "unassigned"}
+        ]
         if terms:
             filtered = []
             for obj in objects:
@@ -2722,6 +2740,8 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
             action = "assign"
         elif help_hint:
             action = "help"
+        elif _is_available_assets_query(payload.message):
+            action = "assets_search"
         elif hw_person_hint:
             action = "assets_hw"
         elif action == "assets_print" and not asset_key_print_hint and _extract_person_after_pre(payload.message):
