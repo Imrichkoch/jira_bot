@@ -565,7 +565,7 @@
         <div id="pdfPositionEditor" style="margin-top: 14px;">
           <div class="row">
             <div>
-              <label for="pdfClickField">PDF click-to-place</label>
+              <label for="pdfClickField">Document click-to-place</label>
               <select id="pdfClickField">
                 <option value="employee_name">Name</option>
                 <option value="device_name">PC / device</option>
@@ -573,10 +573,10 @@
                 <option value="extra_text">Extra text</option>
               </select>
             </div>
-            <button id="togglePdfPlaceButton" class="secondary" type="button">Zapnut oznacenie pozicie</button>
+            <button id="togglePdfPlaceButton" class="secondary" type="button">Enable placement mode</button>
           </div>
           <div class="muted" style="margin-top: 8px;">
-            The PDF scrolls normally. To save a field position, enable placement mode and click inside the document.
+            Select a field, enable placement mode and click inside the PDF preview. DOCX templates are converted to PDF first for accurate positioning.
           </div>
           <div id="pdfPreviewWrap" class="pdf-preview-wrap hidden">
             <embed id="pdfPreview" type="application/pdf" />
@@ -659,7 +659,7 @@
     function setPdfPlacing(active) {
       pdfPlacing = active;
       $("pdfPreviewWrap").classList.toggle("placing", active);
-      $("togglePdfPlaceButton").textContent = active ? "Vypnut oznacenie pozicie" : "Zapnut oznacenie pozicie";
+      $("togglePdfPlaceButton").textContent = active ? "Disable placement mode" : "Enable placement mode";
     }
 
     function applyTemplateFields(fields = {}) {
@@ -760,30 +760,25 @@
     function updateTemplateFormatUi() {
       const isPdf = $("templateFormat").value === "pdf";
       document.querySelectorAll(".docx-config").forEach((el) => el.classList.toggle("hidden", isPdf));
-      document.querySelectorAll(".pdf-config").forEach((el) => el.classList.toggle("hidden", !isPdf));
-      $("pdfPositionEditor").classList.toggle("hidden", !isPdf);
+      document.querySelectorAll(".pdf-config").forEach((el) => el.classList.remove("hidden"));
+      $("pdfPositionEditor").classList.remove("hidden");
       if (isPdf) {
         $("docxPreviewWrap").classList.add("hidden");
-        $("templateFormatNote").textContent = "PDF mode: select a field, enable placement mode, then click its exact position in the PDF preview.";
+        $("templateFormatNote").textContent = "PDF mode: select a field, enable placement mode, then click its exact position in the PDF preview. Numeric inputs are page, X %, Y % and font size.";
       } else {
-        $("pdfPreviewWrap").classList.add("hidden");
-        $("templateFormatNote").textContent = "DOCX mode: place the shown placeholders directly in the Word document. Their location in Word is the final location; PDF coordinates are not used.";
-        setPdfPlacing(false);
+        $("templateFormatNote").textContent = "DOCX source mode: upload the Word template, then click Preview. JiraBot converts it to PDF so you can place every field precisely; generated documents are PDF. Numeric inputs are page, X %, Y % and font size.";
       }
     }
 
     async function previewTemplate(template) {
       setStatus("templateStatus", `Loading preview for ${template.name}...`);
-      const blob = await apiFile(`/admin/api/${templateMode}-templates/${template.id}/file`);
-      const file = new File([blob], template.file_name || `template.${template.template_format}`, { type: blob.type });
-      selectedTemplateFile = file;
+      const blob = await apiFile(`/admin/api/${templateMode}-templates/${template.id}/preview`);
+      const file = new File([blob], `${template.name || "template"}-preview.pdf`, { type: "application/pdf" });
+      selectedTemplateFile = null;
       $("templateFormat").value = template.template_format;
       updateTemplateFormatUi();
-      if (template.template_format === "pdf") {
-        await renderPdfPreview(file);
-      } else {
-        await renderDocxPreview(file);
-      }
+      $("docxPreviewWrap").classList.add("hidden");
+      await renderPdfPreview(file);
       setStatus("templateStatus", `Preview for ${template.name} loaded.`);
     }
 
@@ -1321,6 +1316,7 @@
           await renderPdfPreview(file);
         } else {
           await renderDocxPreview(file);
+          setStatus("templateStatus", "DOCX content preview loaded. Add the template to generate the exact PDF preview used for click-to-place.");
         }
         setPdfPlacing(false);
       } catch (err) {
@@ -1358,7 +1354,7 @@
         if (!file) throw new Error("Choose a DOCX or PDF file.");
         setStatus("templateStatus", "Uploading template...");
         const content = await fileToBase64(file);
-        await api(`/admin/api/${templateMode}-templates`, {
+        const saved = await api(`/admin/api/${templateMode}-templates`, {
           method: "POST",
           body: JSON.stringify({
             name: $("templateName").value || file.name,
@@ -1379,6 +1375,7 @@
         setPdfPlacing(false);
         setStatus("templateStatus", "Template saved and activated.");
         await loadTemplates();
+        if (saved.template) await previewTemplate(saved.template);
       } catch (err) {
         setStatus("templateStatus", err.message, true);
       }

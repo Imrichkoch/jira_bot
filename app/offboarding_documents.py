@@ -3,6 +3,9 @@ from __future__ import annotations
 import base64
 import json
 import re
+import shutil
+import subprocess
+import tempfile
 import uuid
 import zipfile
 from datetime import datetime, timezone
@@ -228,6 +231,53 @@ def render_docx_template(template_path: Path, output_path: Path, values: dict[st
             zout.writestr(item, data)
 
 
+def convert_docx_to_pdf(docx_path: Path, pdf_path: Path) -> None:
+    executable = shutil.which("libreoffice") or shutil.which("soffice")
+    if not executable:
+        raise ValueError("DOCX to PDF conversion requires LibreOffice on the server.")
+    with tempfile.TemporaryDirectory(prefix="jirabot-libreoffice-") as temp_dir:
+        temp_root = Path(temp_dir)
+        profile_uri = (temp_root / "profile").resolve().as_uri()
+        command = [
+            executable,
+            "--headless",
+            "--nologo",
+            "--nodefault",
+            "--nofirststartwizard",
+            f"-env:UserInstallation={profile_uri}",
+            "--convert-to",
+            "pdf:writer_pdf_Export",
+            "--outdir",
+            str(temp_root),
+            str(docx_path.resolve()),
+        ]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=120, check=False)
+        converted = temp_root / f"{docx_path.stem}.pdf"
+        if result.returncode != 0 or not converted.is_file():
+            detail = (result.stderr or result.stdout or "Unknown LibreOffice error").strip()
+            raise ValueError(f"DOCX preview conversion failed: {detail[:500]}")
+        pdf_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(converted, pdf_path)
+    if not pdf_path.read_bytes().startswith(b"%PDF"):
+        raise ValueError("LibreOffice did not produce a valid PDF file.")
+
+
+def render_docx_as_pdf_template(
+    template_path: Path,
+    output_path: Path,
+    values: dict[str, str],
+    fields: dict[str, Any],
+) -> None:
+    with tempfile.TemporaryDirectory(prefix="jirabot-docx-template-") as temp_dir:
+        temp_root = Path(temp_dir)
+        prepared_docx = temp_root / "prepared-template.docx"
+        converted_pdf = temp_root / "prepared-template.pdf"
+        empty_values = {key: "" for key in FIELD_DEFAULTS}
+        render_docx_template(template_path, prepared_docx, empty_values, fields)
+        convert_docx_to_pdf(prepared_docx, converted_pdf)
+        render_pdf_template(converted_pdf, output_path, values, fields)
+
+
 def _wrap_text(value: str, max_chars: int) -> list[str]:
     lines: list[str] = []
     for raw_line in (value or "").splitlines() or [""]:
@@ -336,15 +386,16 @@ def render_offboarding_document(
         render_default_pdf(output_path, values)
         return {"file_name": file_name, "format": "pdf"}
 
-    fmt = str(template.get("template_format") or "pdf").lower()
-    file_name = f"{_safe_slug(file_stem)}.{fmt}"
+    source_fmt = str(template.get("template_format") or "pdf").lower()
+    output_fmt = "pdf" if source_fmt == "docx" else source_fmt
+    file_name = f"{_safe_slug(file_stem)}.{output_fmt}"
     output_path = output_dir / file_name
     template_path = template_store.file_path(template)
     fields = template.get("fields") or {}
-    if fmt == "docx":
-        render_docx_template(template_path, output_path, values, fields)
-    elif fmt == "pdf":
+    if source_fmt == "docx":
+        render_docx_as_pdf_template(template_path, output_path, values, fields)
+    elif source_fmt == "pdf":
         render_pdf_template(template_path, output_path, values, fields)
     else:
         raise ValueError("Unsupported template format.")
-    return {"file_name": file_name, "format": fmt}
+    return {"file_name": file_name, "format": output_fmt}

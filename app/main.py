@@ -25,7 +25,7 @@ from app.jira_client import JiraClient
 from app.jql_guard import JQLValidationError, validate_jql
 from app.ldap_auth import LdapAuthenticationError, LdapAuthenticator
 from app.ldap_settings import LdapSettingsStore
-from app.offboarding_documents import OffboardingTemplateStore, render_offboarding_document
+from app.offboarding_documents import OffboardingTemplateStore, convert_docx_to_pdf, render_offboarding_document
 from app.reporting import build_ticket_report
 from app.rag_store import RagStore
 from app.runtime_settings import RuntimeSettingsStore
@@ -781,6 +781,30 @@ def admin_list_offboarding_templates(admin: dict[str, Any] = Depends(_require_ad
     return {"templates": template_store.list_templates()}
 
 
+def _admin_template_preview(
+    store: OffboardingTemplateStore,
+    template_id: str,
+    preview_group: str,
+) -> FileResponse:
+    template = store.get(template_id)
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found.")
+    source = store.file_path(template)
+    if not source.is_file():
+        raise HTTPException(status_code=404, detail="Template file not found.")
+    if template.get("template_format") == "pdf":
+        return FileResponse(source, media_type="application/pdf", content_disposition_type="inline")
+    preview_dir = DATA_DIR / "template_previews" / preview_group
+    preview_path = preview_dir / f"{template_id}.pdf"
+    try:
+        if not preview_path.is_file() or preview_path.stat().st_mtime < source.stat().st_mtime:
+            preview_dir.mkdir(parents=True, exist_ok=True)
+            convert_docx_to_pdf(source, preview_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return FileResponse(preview_path, media_type="application/pdf", content_disposition_type="inline")
+
+
 @app.get("/admin/api/offboarding-templates/{template_id}/file")
 def admin_get_offboarding_template_file(
     template_id: str,
@@ -803,6 +827,14 @@ def admin_get_offboarding_template_file(
         filename=str(template.get("file_name") or path.name),
         content_disposition_type="inline",
     )
+
+
+@app.get("/admin/api/offboarding-templates/{template_id}/preview")
+def admin_get_offboarding_template_preview(
+    template_id: str,
+    admin: dict[str, Any] = Depends(_require_admin),
+) -> FileResponse:
+    return _admin_template_preview(template_store, template_id, "offboarding")
 
 
 @app.post("/admin/api/offboarding-templates")
@@ -888,6 +920,14 @@ def admin_get_onboarding_template_file(
         filename=str(template.get("file_name") or path.name),
         content_disposition_type="inline",
     )
+
+
+@app.get("/admin/api/onboarding-templates/{template_id}/preview")
+def admin_get_onboarding_template_preview(
+    template_id: str,
+    admin: dict[str, Any] = Depends(_require_admin),
+) -> FileResponse:
+    return _admin_template_preview(onboarding_template_store, template_id, "onboarding")
 
 
 @app.post("/admin/api/onboarding-templates")
