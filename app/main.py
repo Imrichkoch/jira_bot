@@ -1737,9 +1737,9 @@ def _extract_onboarding_recipient(text: str, parsed: dict[str, Any] | None = Non
     if email:
         return email.group(1)
     for pattern in [
-        r"\b(?:onboarding|onboarduj|onboard|nastup)\b[:\s-]+(.+)$",
         r"\b(?:pre|for|na|dostane|pridel(?:it|iť)?|prirad(?:it|iť)?|zamestnancovi|pouzivatelovi|používateľovi)\b[:\s-]+(.+)$",
         r"\b(?:meno|recipient|user|pouzivatel|používateľ)\b[:\s-]+(.+)$",
+        r"\b(?:onboarding|onboarduj|onboard|onbored|onborduj|onbord|onbording|nastup)\b[:\s-]+(.+)$",
     ]:
         match = re.search(pattern, text, flags=re.IGNORECASE)
         if match:
@@ -1757,6 +1757,16 @@ def _extract_onboarding_recipient(text: str, parsed: dict[str, Any] | None = Non
     if isinstance(parsed_query, str) and parsed_query.strip():
         return None
     return None
+
+
+def _is_onboarding_command(text: str) -> bool:
+    normalized = _normalize_lookup_text(text)
+    return bool(
+        re.search(
+            r"\b(?:onboarding|onboarduj|onboard|onbored|onborduj|onbord|onbording|nastup)\b",
+            normalized,
+        )
+    )
 
 
 def _onboarding_selection_prompt(
@@ -2687,7 +2697,7 @@ def chat(payload: ChatRequest, api_access: dict[str, Any] = Depends(_require_api
                 and re.search(r"\b(protokol|zariaden|pc|laptop|notebook|hardware)\b", lower_message)
             )
         )
-        onboarding_doc_hint = bool(
+        onboarding_doc_hint = _is_onboarding_command(payload.message) or bool(
             re.search(
                 r"\b(onboarding|nastup|novy\s+zamestnanec|novému|novemu|dostane|odovzdavaci|odovzdávací|pridel|priraď|prirad|assign|assigni|odovzdaj|odovzdat|odovzdať)\b",
                 lower_message,

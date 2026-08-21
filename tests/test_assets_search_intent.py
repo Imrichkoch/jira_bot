@@ -2,6 +2,7 @@ from app.main import (
     _assets_aql_hint,
     _extract_onboarding_recipient,
     _is_available_assets_query,
+    _is_onboarding_command,
     _optional_asset_status_update,
 )
 
@@ -26,6 +27,15 @@ def test_general_assets_question_uses_ai_generation() -> None:
 
 def test_onboarding_command_extracts_recipient() -> None:
     assert _extract_onboarding_recipient("onboarding imrich koch") == "imrich koch"
+
+
+def test_misspelled_onboarding_command_keeps_recipient() -> None:
+    assert _is_onboarding_command("onbored imrich koch") is True
+    assert _extract_onboarding_recipient("onbored imrich koch") == "imrich koch"
+
+
+def test_onboarding_preposition_still_extracts_clean_name() -> None:
+    assert _extract_onboarding_recipient("onboarding pre imrich koch") == "imrich koch"
 
 
 def test_optional_status_update_uses_editable_status_attribute() -> None:
