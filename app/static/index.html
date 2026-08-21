@@ -280,7 +280,7 @@
       if (data.data?.key) lines.push(`Ticket: ${data.data.key}`);
       if (Array.isArray(data.data?.issues) && data.data.issues.length) {
         lines.push("\nTickets:");
-        for (const it of data.data.issues.slice(0, 8)) {
+        for (const it of data.data.issues) {
           lines.push(`- ${it.key}: ${it.summary || "(no summary)"}`);
         }
       }

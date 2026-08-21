@@ -125,7 +125,7 @@ function normalizeResponse(data) {
   if (data.data?.jql) lines.push(`JQL: ${data.data.jql}`);
   if (Array.isArray(data.data?.issues) && data.data.issues.length) {
     lines.push("\nIssues:");
-    for (const it of data.data.issues.slice(0, 8)) {
+    for (const it of data.data.issues) {
       lines.push(`- ${it.key}: ${it.summary || "(no summary)"}`);
     }
   }
