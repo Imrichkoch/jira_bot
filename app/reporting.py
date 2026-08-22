@@ -2,11 +2,66 @@ from __future__ import annotations
 
 import html
 import re
+import unicodedata
 import zipfile
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from xml.sax.saxutils import escape as xml_escape
+
+
+REPORT_LABEL_TRANSLATIONS = {
+    "status": {
+        "ulohy": "Tasks",
+        "nove": "New",
+        "otvorene": "Open",
+        "na vykonanie": "To Do",
+        "rozpracovane": "In Progress",
+        "prebieha": "In Progress",
+        "vyriesene": "Resolved",
+        "hotovo": "Done",
+        "zatvorene": "Closed",
+        "zrusene": "Cancelled",
+        "pozastavene": "On Hold",
+        "caka na zakaznika": "Waiting for customer",
+        "cakanie na zakaznika": "Waiting for customer",
+        "cakajuci na zakaznika": "Waiting for customer",
+        "caka na podporu": "Waiting for support",
+        "cakanie na podporu": "Waiting for support",
+        "cakajuci na podporu": "Waiting for support",
+        "caka na schvalenie": "Awaiting approval",
+        "cakanie na schvalenie": "Awaiting approval",
+    },
+    "priority": {
+        "najvyssia": "Highest",
+        "vysoka": "High",
+        "stredna": "Medium",
+        "nizka": "Low",
+        "najnizsia": "Lowest",
+    },
+    "issue_type": {
+        "uloha": "Task",
+        "poduloha": "Subtask",
+        "poziadavka": "Request",
+        "poziadavka na sluzbu": "Service request",
+        "zmena": "Change",
+        "problem": "Problem",
+    },
+}
+
+
+def _normalized_label(value: str) -> str:
+    text = unicodedata.normalize("NFKD", value)
+    text = "".join(character for character in text if not unicodedata.combining(character))
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def _english_field_label(field: dict | None, kind: str, fallback: str) -> str:
+    value = field or {}
+    # Some Jira Cloud responses expose the canonical name alongside the
+    # localized display name. Prefer it before applying our fallback map.
+    label = str(value.get("untranslatedName") or value.get("name") or fallback)
+    return REPORT_LABEL_TRANSLATIONS.get(kind, {}).get(_normalized_label(label), label)
 
 
 def _report_spec(message: str) -> tuple[str, str, int | None]:
@@ -28,15 +83,15 @@ def _report_spec(message: str) -> tuple[str, str, int | None]:
 def _label(issue: dict, kind: str) -> str:
     fields = issue.get("fields") or {}
     if kind == "priority":
-        return str((fields.get("priority") or {}).get("name") or "No priority")
+        return _english_field_label(fields.get("priority"), kind, "No priority")
     if kind == "assignee":
         return str((fields.get("assignee") or {}).get("displayName") or "Unassigned")
     if kind == "issue_type":
-        return str((fields.get("issuetype") or {}).get("name") or "Unknown")
+        return _english_field_label(fields.get("issuetype"), kind, "Unknown")
     if kind == "created_trend":
         value = str(fields.get("created") or "")
         return value[:10] if len(value) >= 10 else "Unknown date"
-    return str((fields.get("status") or {}).get("name") or "Unknown")
+    return _english_field_label(fields.get("status"), "status", "Unknown")
 
 
 def _svg(title: str, counts: list[tuple[str, int]]) -> str:

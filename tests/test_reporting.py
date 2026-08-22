@@ -16,6 +16,18 @@ class FakeJira:
         }
 
 
+class LocalizedFakeJira:
+    def search_with_fields(self, **_kwargs):
+        return {
+            "issues": [
+                {"fields": {"status": {"name": "Úlohy"}}},
+                {"fields": {"status": {"name": "Vyriešené"}}},
+                {"fields": {"status": {"name": "Rozpracované"}}},
+                {"fields": {"status": {"name": "Waiting for customer"}}},
+            ]
+        }
+
+
 def test_priority_report_generates_all_downloads():
     with tempfile.TemporaryDirectory() as temp_dir:
         result = build_ticket_report(FakeJira(), "KAN", "create a chart of tickets by priority", Path(temp_dir))
@@ -27,3 +39,41 @@ def test_priority_report_generates_all_downloads():
         with zipfile.ZipFile(Path(temp_dir) / result["files"]["xlsx"]) as workbook:
             assert "xl/worksheets/sheet1.xml" in workbook.namelist()
 
+
+def test_status_report_uses_english_labels_by_default():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        result = build_ticket_report(LocalizedFakeJira(), "KAN", "tickets by status", Path(temp_dir))
+
+        assert result["title"] == "Tickets by status"
+        assert result["counts"] == [
+            {"label": "In Progress", "value": 1},
+            {"label": "Resolved", "value": 1},
+            {"label": "Tasks", "value": 1},
+            {"label": "Waiting for customer", "value": 1},
+        ]
+        svg = (Path(temp_dir) / result["files"]["chart"]).read_text(encoding="utf-8")
+        assert "Vyriešené" not in svg
+        assert "Rozpracované" not in svg
+        assert "Resolved" in svg
+        assert "In Progress" in svg
+
+
+def test_report_prefers_atlassian_untranslated_name():
+    class JiraWithUntranslatedStatus:
+        def search_with_fields(self, **_kwargs):
+            return {
+                "issues": [
+                    {
+                        "fields": {
+                            "status": {
+                                "name": "Vlastný slovenský stav",
+                                "untranslatedName": "Custom English status",
+                            }
+                        }
+                    }
+                ]
+            }
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        result = build_ticket_report(JiraWithUntranslatedStatus(), "KAN", "tickets by status", Path(temp_dir))
+        assert result["counts"] == [{"label": "Custom English status", "value": 1}]

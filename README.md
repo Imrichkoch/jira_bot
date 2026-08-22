@@ -175,6 +175,8 @@ Natural-language ticket search follows this path:
 
 Reports query Jira with a larger controlled limit, aggregate results in Python, and generate SVG charts plus optional PDF and Excel downloads. Report files use short-lived signed URLs rather than public static paths.
 
+Report titles, column headings, and known Jira statuses, priorities, and issue types are rendered in English by default. JiraBot prefers Atlassian's canonical `untranslatedName` when the API provides it and otherwise translates known localized Slovak labels. Unknown custom workflow labels are preserved instead of being guessed; assignee names are never translated.
+
 ### Assets Search And Assignment Logic
 
 Assets support is designed to work with configurable schemas instead of a single hard-coded customer schema:
